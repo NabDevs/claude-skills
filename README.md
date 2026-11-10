@@ -31,7 +31,8 @@ These come from the user and define what the skill must do.
 
 ### Design choices
 
-- `scripts/watch.js` polls GitHub GraphQL every 120 seconds and prints one line only when something changed (`OPEN`, `NEW`, `HEAD`, `CLOSED`, `ERROR`). Between changes it is silent, so a `Monitor` on it costs no tokens.
+- `scripts/watch.js` polls GitHub GraphQL every 120 seconds and prints one line only when something changed (`OPEN`, `NEW`, `RESOLVED`, `HEAD`, `CLOSED`, `ERROR`). Between changes it is silent, so a `Monitor` on it costs no tokens.
+- At every start the watcher prints `OPEN` for each unresolved thread that has no card in `companion.json` yet, so a session that stopped halfway loses no thread. Comments on the PR conversation and review summaries have no resolved state: only new ones are reported, as `NEW issue` and `NEW review`. A review summary counts when it has text.
 - Which comments wake the agent (`isWakeWorthy`): not the user's own comments and replies; not bots on the PR conversation (coverage, CI, releases); yes for bots in review threads (Copilot and other review bots); yes for replies in resolved threads, because they reopen the discussion. Bots are detected by `author.__typename === 'Bot'`, because GraphQL bot logins have no `[bot]` suffix.
 - `scripts/serve.js` runs the page and the watcher in one process, so the agent watches one output stream. It listens on `127.0.0.1` only. Every request except the page itself needs a random token, which the page reads from the URL fragment and sends in the `X-Companion-Token` header. A custom header makes a cross-site request from another page fail on the CORS preflight.
 - `assets/page.html` has no external libraries. All comment text is set with `textContent`. It polls `companion.json` every two seconds and does not rebuild while the user types in a reply.

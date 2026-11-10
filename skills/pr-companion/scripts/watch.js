@@ -4,9 +4,11 @@
 //
 // Usage: node watch.js <owner/repo> <pr-number> [--interval <seconds>] [--once]
 // Output lines:
-//   OPEN    <threadId> <commentId> <author> <path:line>   unresolved thread found at first start
+//   OPEN    <threadId> <commentId> <author> <path:line>   unresolved thread without a card, at each start
 //   NEW     <threadId> <commentId> <author> <path:line>   new comment in a review thread
 //   NEW     issue      <commentId> <author> -             new comment on the PR conversation
+//   NEW     review     <reviewId>  <author> -             new review with a summary text
+//   RESOLVED <threadId>                                    somebody resolved the thread on GitHub
 //   HEAD    <sha>                                          new commit pushed to the PR
 //   CLOSED  <MERGED|CLOSED>                                PR is no longer open; the watch ends
 //   ERROR   <message>                                      GitHub could not be read; retried next tick.
@@ -56,6 +58,7 @@ const QUERY = `query($owner:String!, $name:String!, $pr:Int!) {
     pullRequest(number:$pr) {
       state headRefOid author { login }
       comments(last:100) { nodes { id author { login __typename } } }
+      reviews(last:50) { nodes { id author { login __typename } body } }
       reviewThreads(first:100) { nodes {
         id isResolved path line
         comments(last:50) { nodes { id author { login __typename } } }
@@ -86,31 +89,43 @@ function isWakeWorthy(comment, thread, viewer) {
 }
 
 // Compares the pull request with the state of the previous tick.
-// pr:   the pullRequest object of QUERY
-// prev: { head, seen } of the previous tick, or null at the first start
+// pr:     the pullRequest object of QUERY
+// prev:   { head, seen, resolved } of the previous tick, or null at the first start
+// carded: ids of the threads that have a card on the page, at the start of a watch; null on later ticks
 // Returns the lines to print and the state to save.
-function changes(pr, prev, viewer) {
+function changes(pr, prev, viewer, carded = null) {
   const lines = [];
   const seen = new Set(prev?.seen ?? []);
+  const resolved = new Set(prev?.resolved ?? []);
   const isNew = (comment) => !seen.has(comment.id) && Boolean(seen.add(comment.id));
   const login = (comment) => comment.author?.login ?? 'ghost';
 
   if (prev && pr.headRefOid !== prev.head) lines.push(`HEAD ${pr.headRefOid}`);
 
   for (const thread of pr.reviewThreads.nodes) {
-    const where = `${thread.path}:${thread.line ?? '?'}`;
-    for (const c of thread.comments.nodes) {
-      if (!isNew(c) || !isWakeWorthy(c, thread, viewer)) continue;
-      if (prev) lines.push(`NEW ${thread.id} ${c.id} ${login(c)} ${where}`);
-      else if (!thread.isResolved && c === thread.comments.nodes[0]) lines.push(`OPEN ${thread.id} ${c.id} ${login(c)} ${where}`);
+    const line = (kind, c) => `${kind} ${thread.id} ${c.id} ${login(c)} ${thread.path}:${thread.line ?? '?'}`;
+    const unseen = thread.comments.nodes.filter(isNew);
+    const wakeWorthy = (comments) => comments.filter((c) => isWakeWorthy(c, thread, viewer));
+    if (carded && !thread.isResolved && !carded.has(thread.id)) {
+      // Listed again at every start until it has a card, so a session that stopped halfway loses nothing.
+      const [first] = wakeWorthy(thread.comments.nodes);
+      if (first) lines.push(line('OPEN', first));
+    } else if (prev) {
+      for (const c of wakeWorthy(unseen)) lines.push(line('NEW', c));
     }
+    if (prev?.resolved && thread.isResolved && !resolved.has(thread.id)) lines.push(`RESOLVED ${thread.id}`);
+    if (thread.isResolved) resolved.add(thread.id); else resolved.delete(thread.id);
   }
+  // Conversation comments and review summaries have no resolved state, so only new ones are reported.
   for (const c of pr.comments.nodes) {
     if (isNew(c) && prev && isWakeWorthy(c, null, viewer)) lines.push(`NEW issue ${c.id} ${login(c)} -`);
   }
+  for (const r of pr.reviews.nodes) {
+    if (isNew(r) && prev && r.body.trim() && isWakeWorthy(r, null, viewer)) lines.push(`NEW review ${r.id} ${login(r)} -`);
+  }
   if (pr.state !== 'OPEN') lines.push(`CLOSED ${pr.state}`);
 
-  return { lines, closed: pr.state !== 'OPEN', state: { head: pr.headRefOid, seen: [...seen] } };
+  return { lines, closed: pr.state !== 'OPEN', state: { head: pr.headRefOid, seen: [...seen], resolved: [...resolved] } };
 }
 
 function readJson(file) {
@@ -123,9 +138,12 @@ async function tick(target, viewer, isStart = false) {
   if (isStart && pr.author?.login !== viewer) {
     throw new Error(`PR #${target.pr} is by ${pr.author?.login ?? 'ghost'}, not by ${viewer}: the companion is for your own pull request`);
   }
-  const stateFile = path.join(stateDirFor(target), 'watch-state.json');
-  const result = changes(pr, readJson(stateFile), viewer);
-  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  const stateDir = stateDirFor(target);
+  const stateFile = path.join(stateDir, 'watch-state.json');
+  const cards = isStart ? readJson(path.join(stateDir, 'companion.json'))?.cards ?? [] : null;
+  const carded = cards && new Set(cards.flatMap((card) => card.threadIds ?? []));
+  const result = changes(pr, readJson(stateFile), viewer, carded);
+  fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(stateFile, JSON.stringify(result.state, null, 2));
   return result;
 }

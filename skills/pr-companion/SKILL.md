@@ -40,7 +40,8 @@ Handle every line as it arrives. Write the result to `companion.json` first; the
 | Line | What to do |
 |---|---|
 | `OPEN` / `NEW <threadId> …` | Read the whole thread. Judge it with `pr-feedback-walk` walk steps 1 to 4: comment verbatim, threads on the same problem in one card, the claim checked against the code with `file:line`, then a fix or a pushback. Write the fix as a unified diff that you do not apply. Draft the reply with `writing-style`. Add or update the card with status `new`. |
-| `NEW issue <commentId> …` | Same, for a comment on the PR conversation: `path` is null. Skip it when it is no review feedback (thanks, a question already answered); then add nothing. |
+| `NEW issue <commentId> …` / `NEW review <reviewId> …` | Same, for a comment on the PR conversation or the summary text of a review: `path` is null. Skip it when it is no review feedback (thanks, a question already answered); then add nothing. |
+| `RESOLVED <threadId>` | Somebody resolved the thread on GitHub. When every thread of a card is resolved, set the card to `dismissed` with `statusNote` "Resolved on GitHub". |
 | `HEAD <sha>` | A new commit. For each open card, check the code again: when the commit fixed it, say so in `take`; when the diff no longer applies, rewrite it and set status `outdated`. |
 | `ERROR <message>` | GitHub could not be read. Tell the user in one line. After `READY` the watcher retries by itself. Before `READY` the process has stopped: for a PR by somebody else, point to `guided-pr-review`; else solve the cause and start it again. |
 | `CLOSED` | Tell the user in one line that the PR is merged or closed and the companion stopped. |

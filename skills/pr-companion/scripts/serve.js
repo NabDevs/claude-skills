@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Serves the companion page for one pull request and watches that pull request, in one process.
 // Every line on stdout is one thing for the agent to handle:
-//   READY  <url>                         the page is up; give this URL to the user
-//   EVENT  <json>                        the user pressed a button on the page
-//   OPEN | NEW | HEAD | CLOSED | ERROR   from watch.js
+//   READY  <url>                                    the page is up; give this URL to the user
+//   EVENT  <json>                                   the user pressed a button on the page
+//   OPEN | NEW | RESOLVED | HEAD | CLOSED | ERROR   from watch.js
 //
 // Usage: node serve.js <owner/repo> <pr-number> [--interval <seconds>]
 

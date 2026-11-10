@@ -9,7 +9,7 @@ const comment = (id, author) => ({ id, author });
 const thread = (id, comments, extra = {}) => ({ id, isResolved: false, path: 'src/a.js', line: 7, comments: { nodes: comments }, ...extra });
 const pullRequest = (extra = {}) => ({
   state: 'OPEN', headRefOid: 'aaa', author: { login: 'me' },
-  comments: { nodes: [] }, reviewThreads: { nodes: [] }, ...extra,
+  comments: { nodes: [] }, reviews: { nodes: [] }, reviewThreads: { nodes: [] }, ...extra,
 });
 
 test('parseTarget reads the repository, the number and the options', () => {
@@ -41,10 +41,34 @@ test('the first start lists unresolved threads and stays silent about the rest',
       thread('t3', [comment('c4', bot)], { line: null }),
     ] },
   });
-  const { lines, closed, state } = changes(pr, null, 'me');
+  const { lines, closed, state } = changes(pr, null, 'me', new Set());
   assert.deepEqual(lines, ['OPEN t1 c1 anna src/a.js:7', 'OPEN t3 c4 copilot-pull-request-reviewer src/a.js:?']);
   assert.equal(closed, false);
-  assert.deepEqual(state, { head: 'aaa', seen: ['c1', 'c2', 'c3', 'c4', 'i1'] });
+  assert.deepEqual(state, { head: 'aaa', seen: ['c1', 'c2', 'c3', 'c4', 'i1'], resolved: ['t2'] });
+});
+
+test('a later start lists the unresolved threads that still have no card', () => {
+  const pr = pullRequest({ reviewThreads: { nodes: [
+    thread('t1', [comment('c1', human('anna'))]),
+    thread('t2', [comment('c2', human('anna')), comment('c5', human('bas'))]),
+    thread('t3', [comment('c3', human('me')), comment('c4', human('anna'))]),
+  ] } });
+  const prev = { head: 'aaa', seen: ['c1', 'c2', 'c3', 'c4'], resolved: [] };
+  assert.deepEqual(changes(pr, prev, 'me', new Set(['t1', 't2'])).lines, ['NEW t2 c5 bas src/a.js:7', 'OPEN t3 c4 anna src/a.js:7']);
+  assert.deepEqual(changes(pr, prev, 'me', null).lines, ['NEW t2 c5 bas src/a.js:7']);
+});
+
+test('a review summary and a resolved thread are reported once', () => {
+  const review = (id, author, body) => ({ id, author, body });
+  const before = pullRequest({ reviewThreads: { nodes: [thread('t1', [comment('c1', human('anna'))])] } });
+  const { state } = changes(before, null, 'me', new Set());
+  const pr = pullRequest({
+    reviews: { nodes: [review('r1', human('anna'), 'Please add tests.'), review('r2', human('anna'), '  '), review('r3', bot, 'Reviewed 3 files'), review('r4', human('me'), 'own')] },
+    reviewThreads: { nodes: [thread('t1', [comment('c1', human('anna'))], { isResolved: true })] },
+  });
+  const next = changes(pr, state, 'me');
+  assert.deepEqual(next.lines, ['RESOLVED t1', 'NEW review r1 anna -']);
+  assert.deepEqual(changes(pr, next.state, 'me').lines, []);
 });
 
 test('a later tick reports new comments, a new head and the end of the pull request', () => {
