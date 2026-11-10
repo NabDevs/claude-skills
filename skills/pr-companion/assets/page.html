@@ -126,8 +126,8 @@ const STATUS = {
   new: { label: 'Waiting for you', buttons: ['apply', 'reply', 'recheck', 'dismiss'] },
   outdated: { label: 'Fix rewritten after a new commit', buttons: ['apply', 'reply', 'recheck', 'dismiss'] },
   applying: { label: 'Applying the fix…', busy: true },
-  applied: { label: 'Fix applied, not committed yet', buttons: ['commit', 'undo', 'reply'], step: 'commit' },
-  'tests-failed': { label: 'Tests fail with the fix', buttons: ['undo', 'reply'], step: 'undo', attention: true },
+  applied: { label: 'Fix applied, not committed yet', buttons: ['commit', 'undo'], step: 'commit' },
+  'tests-failed': { label: 'Tests fail with the fix', buttons: ['undo'], step: 'undo', attention: true },
   committing: { label: 'Committing and pushing…', busy: true },
   committed: { label: 'Committed and pushed, no reply yet', buttons: ['reply', 'recheck', 'dismiss'], step: 'reply' },
   replied: { label: 'Replied', done: true },
@@ -283,7 +283,7 @@ function cardView(card) {
     body.append(el('h3', {}, 'Result'), el('div', { class: 'note' + tone }, link(card.statusNote, card.statusNote) || rich(card.statusNote)));
   }
 
-  if (!status.done && card.reply != null) {
+  if ((status.buttons || []).includes('reply') && card.reply != null) {
     const draft = drafts[card.id];
     const area = el('textarea', { 'aria-label': 'Draft reply', rows: 3 });
     area.value = draft?.text ?? card.reply;
