@@ -9,7 +9,8 @@
 //   NEW     issue      <commentId> <author> -             new comment on the PR conversation
 //   HEAD    <sha>                                          new commit pushed to the PR
 //   CLOSED  <MERGED|CLOSED>                                PR is no longer open; the watch ends
-//   ERROR   <message>                                      GitHub could not be read; retried next tick
+//   ERROR   <message>                                      GitHub could not be read; retried next tick.
+//                                                          At the start it is the last line: the watch did not start.
 
 const { execFile } = require('node:child_process');
 const fs = require('node:fs');
@@ -19,12 +20,14 @@ const { promisify } = require('node:util');
 
 const USAGE = '<owner/repo> <pr-number> [--interval <seconds>] [--once]';
 
-// The pull request to watch, from the command line arguments.
+// The pull request to watch, from the command line arguments, or null when they name none.
 function parseTarget([repo = '', prArg, ...rest]) {
+  const pr = Number(prArg);
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !Number.isInteger(pr) || pr < 1) return null;
   const [owner, name] = repo.split('/');
   const at = rest.indexOf('--interval');
   return {
-    owner, name, pr: Number(prArg),
+    owner, name, pr,
     interval: (at !== -1 && Number(rest[at + 1])) || 120,
     once: rest.includes('--once'),
   };
@@ -37,12 +40,21 @@ function stateDirFor({ owner, name, pr }) {
 }
 
 const run = promisify(execFile);
-const gh = async (args) => (await run('gh', args, { encoding: 'utf8' })).stdout;
+
+// Runs gh and returns its output. A failure carries the reason gh gave, not the command line.
+async function gh(args) {
+  try {
+    return (await run('gh', args, { encoding: 'utf8' })).stdout;
+  } catch (error) {
+    const reason = String(error.stderr || error.message).split('\n').find((line) => line.trim());
+    throw new Error(reason.replace(/^gh: /, ''));
+  }
+}
 
 const QUERY = `query($owner:String!, $name:String!, $pr:Int!) {
   repository(owner:$owner, name:$name) {
     pullRequest(number:$pr) {
-      state headRefOid
+      state headRefOid author { login }
       comments(last:100) { nodes { id author { login __typename } } }
       reviewThreads(first:100) { nodes {
         id isResolved path line
@@ -106,20 +118,25 @@ function readJson(file) {
 }
 
 // One look at GitHub: returns the lines for the agent and saves what was seen.
-async function tick(target, viewer) {
+async function tick(target, viewer, isStart = false) {
+  const pr = await fetchPr(target);
+  if (isStart && pr.author?.login !== viewer) {
+    throw new Error(`PR #${target.pr} is by ${pr.author?.login ?? 'ghost'}, not by ${viewer}: the companion is for your own pull request`);
+  }
   const stateFile = path.join(stateDirFor(target), 'watch-state.json');
-  const result = changes(await fetchPr(target), readJson(stateFile), viewer);
+  const result = changes(pr, readJson(stateFile), viewer);
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   fs.writeFileSync(stateFile, JSON.stringify(result.state, null, 2));
   return result;
 }
 
 // Watches the pull request until it is merged or closed, and passes each line to emit.
-// A failure of the first look rejects: wrong repo, PR number or gh login. onReady runs after that
-// first look and before its lines, so a caller can start what depends on a pull request that exists.
+// A failure of the first look rejects: wrong repo, PR number or gh login, or a pull request by
+// somebody else. onReady runs after that first look and before its lines, so a caller can start
+// what depends on a pull request that exists.
 async function watch(target, emit, onReady = () => {}) {
   const viewer = (await gh(['api', 'user', '--jq', '.login'])).trim();
-  const first = await tick(target, viewer);
+  const first = await tick(target, viewer, true);
   await onReady();
   for (const line of first.lines) emit(line);
   if (first.closed || target.once) return;
@@ -134,23 +151,26 @@ async function watch(target, emit, onReady = () => {}) {
       lastError = '';
       if (closed) return;
     } catch (error) {
-      const message = String(error.message).split('\n')[0];
-      if (message !== lastError) emit(`ERROR ${message}`);
-      lastError = message;
+      if (error.message !== lastError) emit(`ERROR ${error.message}`);
+      lastError = error.message;
     }
   }
 }
 
-module.exports = { USAGE, parseTarget, stateDirFor, isWakeWorthy, changes, readJson, watch };
-
-if (require.main === module) {
+// Runs main for a script started from the command line. A failure is one ERROR line on stdout,
+// where the agent reads, and exit code 1; arguments that name no pull request give the usage.
+function cli(script, main) {
   const target = parseTarget(process.argv.slice(2));
-  if (!target.name || !target.pr) {
-    console.error(`usage: watch.js ${USAGE}`);
+  if (!target) {
+    console.error(`usage: ${script} ${USAGE}`);
     process.exit(2);
   }
-  watch(target, console.log).catch((error) => {
-    console.error(error.message);
+  main(target).catch((error) => {
+    console.log(`ERROR ${error.message}`);
     process.exit(1);
   });
 }
+
+module.exports = { parseTarget, stateDirFor, isWakeWorthy, changes, readJson, watch, cli };
+
+if (require.main === module) cli('watch.js', (target) => watch(target, console.log));

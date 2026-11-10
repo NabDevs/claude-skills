@@ -11,7 +11,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { USAGE, parseTarget, stateDirFor, watch } = require('./watch.js');
+const { stateDirFor, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
 const EVENT_TYPES = new Set(['apply', 'commit', 'reply', 'dismiss', 'recheck']);
@@ -52,14 +52,8 @@ function createApp({ stateDir, token, emit }) {
   });
 }
 
-async function main() {
-  const target = parseTarget(process.argv.slice(2));
-  if (!target.name || !target.pr) {
-    console.error(`usage: serve.js ${USAGE}`);
-    process.exit(2);
-  }
-  const stateDir = stateDirFor(target);
-  fs.mkdirSync(stateDir, { recursive: true });
+async function main(target) {
+  const stateDir = stateDirFor(target); // created by the first look at the pull request
   const token = crypto.randomBytes(16).toString('hex');
   const server = createApp({ stateDir, token, emit: console.log });
 
@@ -76,9 +70,4 @@ async function main() {
 
 module.exports = { createApp };
 
-if (require.main === module) {
-  main().catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-}
+if (require.main === module) cli('serve.js', main);
