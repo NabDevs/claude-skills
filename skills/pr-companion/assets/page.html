@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR companion</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #667085; --border: #d9dde5;
+    --holds: #1a7f37; --nothold: #b42318; --unsure: #9a6700; --accent: #2457d6;
+    --add: #e6f4ea; --del: #fdecea; --code: #f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --border: #2e3644;
+      --holds: #4ac26b; --nothold: #f97066; --unsure: #e3b341; --accent: #7aa2ff;
+      --add: #12301d; --del: #3a1714; --code: #141920;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { padding: 16px; border-bottom: 1px solid var(--border); background: var(--card); }
+  header h1 { font-size: 18px; margin: 0 0 4px; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+  main { max-width: 920px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  .counts { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card.done { opacity: .6; }
+  .card h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .where { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--muted); font-weight: 400; }
+  blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .reply-in-thread { font-size: 13px; color: var(--muted); margin-left: 12px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; font-weight: 600; }
+  .holds { color: var(--holds); } .does-not-hold { color: var(--nothold); } .unsure { color: var(--unsure); }
+  .status { font-size: 12px; color: var(--muted); }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 4px; }
+  .take { white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 0; }
+  pre span { display: block; white-space: pre; }
+  pre .a { background: var(--add); } pre .d { background: var(--del); }
+  textarea { width: 100%; min-height: 90px; font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .busy { font-size: 13px; color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .error { color: var(--nothold); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">PR companion</h1>
+  <div class="meta" id="meta">Laden…</div>
+</header>
+<main id="main"></main>
+<script>
+'use strict';
+const token = location.hash.slice(1);
+const headers = { 'X-Companion-Token': token };
+const drafts = {};      // cardId -> reply text the user is editing
+const pending = {};     // cardId -> { type, status } of the last button press
+let lastJson = '';
+let stale = false;   // a render was skipped while the user typed
+
+const VERDICT = { holds: 'Terecht', 'does-not-hold': 'Niet terecht', unsure: 'Twijfel' };
+const STATUS = {
+  new: 'Nieuw', applying: 'Fix wordt toegepast…', applied: 'Fix toegepast, nog niet gecommit',
+  'tests-failed': 'Tests falen na de fix', committing: 'Bezig met commit…', committed: 'Gecommit en gepusht',
+  replied: 'Beantwoord', dismissed: 'Genegeerd', outdated: 'Verouderd door een nieuwe commit',
+};
+const DONE = new Set(['replied', 'dismissed']);
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+}
+
+function diffView(text) {
+  const pre = el('pre');
+  for (const line of text.split('\n')) {
+    const cls = line.startsWith('+') && !line.startsWith('+++') ? 'a'
+      : line.startsWith('-') && !line.startsWith('---') ? 'd' : '';
+    pre.append(el('span', cls ? { class: cls } : {}, line || ' '));
+  }
+  return pre;
+}
+
+async function sendEvent(card, type) {
+  const body = { type, cardId: card.id };
+  if (type === 'reply') body.reply = drafts[card.id] ?? card.reply ?? '';
+  pending[card.id] = { type, status: card.status };
+  render(JSON.parse(lastJson));
+  const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { delete pending[card.id]; alertLine(`Versturen mislukt (${res.status})`); }
+}
+
+function alertLine(text) {
+  document.getElementById('meta').append(el('span', { class: 'error' }, ' · ' + text));
+}
+
+function cardView(card) {
+  const done = DONE.has(card.status);
+  const node = el('article', { class: 'card' + (done ? ' done' : '') });
+
+  node.append(el('h2', {},
+    el('span', {}, card.author || 'onbekend'),
+    el('span', { class: 'where' }, card.path ? `${card.path}:${card.line ?? '?'}` : 'PR-gesprek'),
+    card.verdict ? el('span', { class: 'badge ' + card.verdict }, VERDICT[card.verdict] || card.verdict) : null,
+    el('span', { class: 'status' }, STATUS[card.status] || card.status || ''),
+    card.url ? el('a', { href: card.url, target: '_blank', rel: 'noopener' }, 'GitHub') : null,
+  ));
+
+  node.append(el('blockquote', {}, card.comment || ''));
+  for (const r of card.replies || []) node.append(el('div', { class: 'reply-in-thread' }, `${r.author}: ${r.body}`));
+
+  if (card.take) node.append(el('h3', {}, 'Oordeel'), el('div', { class: 'take' }, card.take));
+  if (card.proposal?.diff && card.status !== 'applied' && card.status !== 'committed') {
+    node.append(el('h3', {}, 'Voorgestelde fix'), diffView(card.proposal.diff));
+  }
+  if (card.changes) node.append(el('h3', {}, 'Toegepaste wijziging'), diffView(card.changes));
+  if (card.statusNote) node.append(el('h3', {}, 'Resultaat'), el('div', { class: 'take' }, card.statusNote));
+
+  if (!done && card.reply != null) {
+    const area = el('textarea', { 'aria-label': 'Concept-reply' });
+    area.value = drafts[card.id] ?? card.reply;
+    area.addEventListener('input', () => { drafts[card.id] = area.value; });
+    node.append(el('h3', {}, 'Concept-reply (pas aan wat je wilt)'), area);
+  }
+
+  if (!done) {
+    const busy = pending[card.id];
+    const actions = el('div', { class: 'actions' });
+    const btn = (label, type, primary) => el('button', { class: primary ? 'primary' : '', onclick: () => sendEvent(card, type), ...(busy ? { disabled: '' } : {}) }, label);
+    if (card.proposal?.diff && ['new', 'outdated', 'tests-failed'].includes(card.status)) actions.append(btn('Fix toepassen', 'apply', true));
+    if (card.status === 'applied') actions.append(btn('Commit & push', 'commit', true));
+    if (card.reply != null) actions.append(btn('Reply plaatsen', 'reply'));
+    actions.append(btn('Opnieuw beoordelen', 'recheck'));
+    actions.append(btn('Negeren', 'dismiss'));
+    if (busy) actions.append(el('span', { class: 'busy' }, 'Claude is ermee bezig…'));
+    node.append(actions);
+  }
+  return node;
+}
+
+function render(data) {
+  for (const card of data.cards || []) {
+    // A button press is answered once the agent changes the card's status.
+    if (pending[card.id] && pending[card.id].status !== card.status) delete pending[card.id];
+    if (DONE.has(card.status)) delete drafts[card.id];
+  }
+  const pr = data.pr || {};
+  document.getElementById('title').textContent = pr.title ? `#${pr.number} ${pr.title}` : 'PR companion';
+  document.title = pr.number ? `PR #${pr.number} · companion` : 'PR companion';
+  const meta = document.getElementById('meta');
+  meta.replaceChildren(
+    pr.url ? el('a', { href: pr.url, target: '_blank', rel: 'noopener' }, pr.repo || pr.url) : '',
+    pr.headSha ? ` · head ${pr.headSha.slice(0, 7)}` : '',
+    data.updatedAt ? ` · bijgewerkt ${new Date(data.updatedAt).toLocaleTimeString()}` : '',
+  );
+
+  const cards = [...(data.cards || [])].sort((a, b) => DONE.has(a.status) - DONE.has(b.status));
+  const main = document.getElementById('main');
+  const focused = document.activeElement?.tagName === 'TEXTAREA';
+  stale = focused;
+  if (focused) return; // never rebuild under the user's cursor; the next poll catches up
+  const count = (pred) => cards.filter(pred).length;
+  main.replaceChildren(
+    el('div', { class: 'counts' },
+      el('span', {}, `${count((c) => !DONE.has(c.status))} open`),
+      el('span', { class: 'holds' }, `${count((c) => c.verdict === 'holds')} terecht`),
+      el('span', { class: 'does-not-hold' }, `${count((c) => c.verdict === 'does-not-hold')} niet terecht`),
+      el('span', { class: 'unsure' }, `${count((c) => c.verdict === 'unsure')} twijfel`),
+    ),
+    ...(cards.length ? cards.map(cardView) : [el('div', { class: 'empty' }, 'Nog geen comments. De companion houdt de PR in de gaten.')]),
+  );
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/data', { headers });
+    if (res.status === 403) { document.getElementById('meta').textContent = 'Geen toegang: open de link met het token uit de terminal.'; return; }
+    const json = await res.text();
+    if (json !== lastJson || stale) { lastJson = json; render(JSON.parse(json)); }
+  } catch {
+    document.getElementById('meta').textContent = 'Verbinding met de companion verbroken.';
+  }
+}
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
