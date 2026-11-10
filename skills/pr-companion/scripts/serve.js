@@ -2,7 +2,7 @@
 // Serves the companion page for one pull request and watches that pull request, in one process.
 // Every line on stdout is one thing for the agent to handle:
 //   READY  <url>                                    the page is up; give this URL to the user
-//   EVENT  <json>                                   the user pressed a button on the page
+//   EVENT  <json>                                   the user pressed a button or asked a question on the page
 //   OPEN | NEW | RESOLVED | HEAD | CLOSED | ERROR   from watch.js
 //
 // Usage: node serve.js <owner/repo> <pr-number> [--interval <seconds>]
@@ -14,7 +14,8 @@ const path = require('node:path');
 const { stateDirFor, readJson, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
-const EVENT_TYPES = new Set(['apply', 'undo', 'commit', 'reply', 'dismiss', 'recheck']);
+const BUTTONS = new Set(['apply', 'undo', 'commit', 'reply', 'dismiss', 'recheck']);
+const MAX_QUESTION = 4000;
 const MAX_BODY = 1_000_000; // a button press carries the card the page showed, with its diffs
 const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
 
@@ -45,14 +46,22 @@ function createApp({ stateDir, token, emit }) {
     req.on('end', () => {
       let event;
       try { event = JSON.parse(raw); } catch { return send(400, 'bad json'); }
-      if (!EVENT_TYPES.has(event?.type) || typeof event.cardId !== 'string') return send(400, 'bad event');
-      // A press approves what the page showed, so it only counts for the card as it is now.
-      const current = (readJson(dataFile)?.cards ?? []).find((card) => card.id === event.cardId);
-      if (!current || JSON.stringify(current) !== JSON.stringify(event.card)) return send(409, 'card changed');
-      const clean = { type: event.type, cardId: event.cardId, at: new Date().toISOString() };
-      if (event.type === 'reply') clean.reply = String(event.reply ?? '');
+      // Only the known fields go to the agent. `at` names the event: the agent writes it back with its answer.
+      const clean = { type: event?.type, cardId: event?.cardId ?? null, at: new Date().toISOString() };
+      if (clean.type === 'ask') {
+        // A question is about one card, or about the whole pull request when it names no card.
+        clean.question = typeof event.question === 'string' ? event.question.trim() : '';
+        const badCard = clean.cardId !== null && typeof clean.cardId !== 'string';
+        if (!clean.question || clean.question.length > MAX_QUESTION || badCard) return send(400, 'bad question');
+      } else {
+        if (!BUTTONS.has(clean.type) || typeof clean.cardId !== 'string') return send(400, 'bad event');
+        // A press approves what the page showed, so it only counts for the card as it is now.
+        const current = (readJson(dataFile)?.cards ?? []).find((card) => card.id === clean.cardId);
+        if (!current || JSON.stringify(current) !== JSON.stringify(event.card)) return send(409, 'card changed');
+        if (clean.type === 'reply') clean.reply = String(event.reply ?? '');
+      }
       emit(`EVENT ${JSON.stringify(clean)}`);
-      send(204, '');
+      send(200, JSON.stringify({ at: clean.at }), 'application/json');
     });
   });
 }

@@ -69,6 +69,21 @@ test('a button press reaches the agent as one EVENT line with only the known fie
   assert.equal(event.reply, 'Fixed.\nThanks');
 });
 
+test('a question reaches the agent with its time, for a card or for the whole pull request', async () => {
+  lines.length = 0;
+  const res = await post({ type: 'ask', cardId: 'c1', question: '  Why not a map?  ', card: 'ignored' });
+  const { at } = await res.json();
+  assert.equal((await post({ type: 'ask', question: 'What is left?' })).status, 200);
+  assert.deepEqual(lines.map((line) => JSON.parse(line.slice('EVENT '.length))).map(({ at: _, ...rest }) => rest), [
+    { type: 'ask', cardId: 'c1', question: 'Why not a map?' },
+    { type: 'ask', cardId: null, question: 'What is left?' },
+  ]);
+  assert.equal(JSON.parse(lines[0].slice('EVENT '.length)).at, at);
+  for (const body of [{ type: 'ask' }, { type: 'ask', question: '   ' }, { type: 'ask', question: 7 }, { type: 'ask', cardId: 3, question: 'x' }, { type: 'ask', question: 'x'.repeat(4001) }]) {
+    assert.equal((await post(body)).status, 400, JSON.stringify(body).slice(0, 60));
+  }
+});
+
 test('a press on a card that changed since the page showed it is refused', async () => {
   lines.length = 0;
   writeCards([{ ...CARD, proposal: { diff: '-a\n+c' } }]);

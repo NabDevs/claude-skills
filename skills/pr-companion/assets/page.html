@@ -86,6 +86,12 @@
   button.link { border: 0; background: none; padding: 0; color: var(--accent); font-size: inherit; text-decoration: underline; }
   button:disabled, textarea:disabled { opacity: .5; cursor: default; }
   .error { color: var(--nothold); font-size: 13px; margin-top: 8px; }
+  .question { font-weight: 600; margin-top: 10px; }
+  .answer { border-left: 3px solid var(--accent); padding: 2px 12px; margin: 4px 0; }
+  .ai { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
+  .waiting { display: flex; gap: 6px; align-items: center; }
+  .askrow { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
+  .askrow textarea { min-height: 36px; }
 </style>
 </head>
 <body>
@@ -105,7 +111,10 @@ const drafts = {};        // cardId -> { text, base }: the reply the user is edi
 const pending = {};       // cardId -> { type, snapshot }: the last button press, until the agent changes the card
 const armed = {};         // cardId -> the action that waits for a second click
 const opened = {};        // cardId -> open or closed, once the user chose
-const failed = {};        // cardId -> why the last button press was not sent
+const failed = {};        // cardId -> why the last button press was not sent; 'ask:' + cardId for a question
+const asking = {};        // cardId, or PR for the whole pull request -> the question the user is typing
+const asked = {};         // same key -> [{ at, question }]: questions sent, until the answer is in the data
+const PR = 'pr';
 const views = new Map();  // cardId -> { key, node }: an unchanged card keeps its node, with focus and selection
 let known = null;         // card ids on the page so far; a later one gets a short highlight
 let lastJson = '';
@@ -196,6 +205,53 @@ async function sendEvent(card, type) {
   }
 }
 
+async function ask(id) {
+  const question = (asking[id] || '').trim();
+  if (!question) return;
+  delete failed['ask:' + id];
+  try {
+    const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'ask', cardId: id === PR ? null : id, question }) });
+    if (!res.ok) throw new Error(res.status);
+    (asked[id] ||= []).push({ at: (await res.json()).at, question });
+    delete asking[id];
+  } catch {
+    failed['ask:' + id] = 'Question not sent: the companion does not answer.';
+  }
+  document.activeElement?.blur();
+  render();
+  views.get(id)?.node.querySelector('.askrow textarea')?.focus(); // ready for the next question
+}
+
+// The questions about one card, or about the whole pull request, and a field for the next one.
+function askView(id, answered = []) {
+  const box = el('div', {});
+  for (const q of [...answered, ...(asked[id] || [])]) {
+    box.append(el('div', { class: 'question' }, q.question), q.answer == null
+      ? el('div', { class: 'hint waiting' }, el('span', { class: 'spin' }), 'Waiting for Claude…')
+      : el('div', { class: 'answer' }, el('span', { class: 'ai' }, 'Claude'), rich(q.answer)));
+  }
+  const area = el('textarea', { rows: 1, 'aria-label': 'Question for Claude', placeholder: id === PR ? 'For example: what is left before this can merge?' : 'For example: is there a simpler fix?' });
+  area.value = asking[id] || '';
+  area.addEventListener('input', () => { asking[id] = area.value; });
+  area.addEventListener('blur', () => render());
+  area.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); ask(id); } });
+  box.append(el('div', { class: 'askrow' }, area, el('button', { onclick: () => ask(id) }, 'Ask')));
+  if (failed['ask:' + id]) box.append(el('div', { class: 'error', role: 'alert' }, failed['ask:' + id]));
+  return box;
+}
+
+// The panel for questions about the whole pull request. It opens by itself once it holds a question.
+function prAskView() {
+  const questions = data.questions || [];
+  const total = questions.length + (asked[PR] || []).length;
+  const node = el('details', { class: 'card pr' });
+  node.open = opened[PR] ?? total > 0;
+  node.append(el('summary', { onclick: () => { opened[PR] = !node.open; } },
+    el('b', {}, 'Ask Claude about this pull request'), total ? el('span', { class: 'author' }, `${total} asked`) : null));
+  node.append(el('div', { class: 'body' }, askView(PR, questions)));
+  return node;
+}
+
 function cardView(card) {
   const status = statusOf(card);
   const wait = pending[card.id];
@@ -264,21 +320,30 @@ function cardView(card) {
       ...offered.filter((type) => ACTION[type].quiet).map(button)));
     if (failed[card.id]) body.append(el('div', { class: 'error', role: 'alert' }, failed[card.id]));
   }
+  body.append(el('h3', {}, 'Ask Claude'), askView(card.id, card.questions));
   node.append(body);
   return node;
 }
 
-// Returns the card's node, and builds a new one only when something the card shows has changed.
-function view(card) {
-  const draft = drafts[card.id];
-  const key = JSON.stringify([card, pending[card.id]?.type, armed[card.id], failed[card.id], draft?.base, draft && draft.text !== card.reply]);
-  const old = views.get(card.id);
+// Returns the node with this id, and builds a new one only when what it shows (the key) has changed.
+function keep(id, shown, build) {
+  const key = JSON.stringify(shown);
+  const old = views.get(id);
   const typing = document.activeElement?.tagName === 'TEXTAREA' && old?.node.contains(document.activeElement);
   if (old && (old.key === key || typing)) return old.node; // never rebuild under the user's cursor; blur renders again
-  const node = cardView(card);
-  if (known && !known.has(card.id)) node.classList.add('fresh');
-  views.set(card.id, { key, node });
+  const node = build();
+  views.set(id, { key, node });
   return node;
+}
+
+function view(card) {
+  const draft = drafts[card.id];
+  const shown = [card, pending[card.id]?.type, armed[card.id], failed[card.id], failed['ask:' + card.id], asked[card.id], draft?.base, draft && draft.text !== card.reply];
+  return keep(card.id, shown, () => {
+    const node = cardView(card);
+    if (known && !known.has(card.id)) node.classList.add('fresh');
+    return node;
+  });
 }
 
 function render() {
@@ -287,6 +352,11 @@ function render() {
     // A button press is answered once the agent changes anything on the card.
     if (pending[card.id] && pending[card.id].snapshot !== JSON.stringify(card)) delete pending[card.id];
     if (isDone(card)) delete drafts[card.id];
+  }
+  // A question that was sent is answered once the data holds an entry with its time.
+  for (const [id, sent] of Object.entries(asked)) {
+    const answered = (id === PR ? data.questions : cards.find((c) => c.id === id)?.questions) || [];
+    asked[id] = sent.filter((q) => !answered.some((a) => a.at === q.at));
   }
   const todo = cards.filter((c) => !isDone(c));
   const done = cards.filter(isDone);
@@ -304,15 +374,15 @@ function render() {
     data.updatedAt ? el('span', {}, 'updated ' + new Date(data.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '',
   );
 
-  const wanted = todo.map(view);
+  const wanted = [keep(PR, [data.questions, asked[PR], failed['ask:' + PR]], prAskView), ...todo.map(view)];
   if (!todo.length) {
     wanted.push(el('div', { class: 'empty' }, cards.length ? 'Everything is handled. New comments appear here by themselves.'
       : 'No review comments yet. This page updates by itself when one arrives.'));
   }
   if (done.length) wanted.push(el('div', { class: 'section' }, `Done (${done.length})`), ...done.map(view));
   const main = document.getElementById('main');
-  const keep = new Set(wanted);
-  for (const child of [...main.children]) if (!keep.has(child)) child.remove();
+  const staying = new Set(wanted);
+  for (const child of [...main.children]) if (!staying.has(child)) child.remove();
   wanted.forEach((node, i) => { if (main.children[i] !== node) main.insertBefore(node, main.children[i] || null); });
   known = new Set(cards.map((c) => c.id));
 
@@ -337,6 +407,7 @@ async function poll() {
     if (json !== lastJson) {
       try { data = JSON.parse(json); } catch { return; } // a half-written file: the next poll reads it again
       lastJson = json;
+      for (const id of Object.keys(failed)) delete failed[id]; // a message about an earlier press is over once the data moved on
       render();
     }
     setConn('ok', 'Live');

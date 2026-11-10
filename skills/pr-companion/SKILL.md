@@ -51,6 +51,7 @@ Handle every line as it arrives. Write the result to `companion.json` first; the
 | `EVENT {"type":"undo"}` | The fix is in the working tree (`applied` or `tests-failed`). Take the card's `changes` out again with a reverse apply of that diff and touch nothing else. Remove `changes`, say what you did in `statusNote`. Status `new`. |
 | `EVENT {"type":"commit"}` | Stage only the files in the card's `changes`, commit as `pr-feedback-walk` step 6 says, and push. The user saw `changes` on the page before pressing the button: that is the approval step 6 asks for. Put the commit SHA in `statusNote`. Status `committed`. |
 | `EVENT {"type":"reply","reply":"…"}` | Post the `reply` text from the event exactly as it is, as `pr-feedback-walk` Replying says: in the thread, or as a PR comment for a conversation comment. Leave the thread open. Put the reply URL in `statusNote`. Status `replied`. |
+| `EVENT {"type":"ask","question":"…"}` | A question from the page: about the card in `cardId`, or about the whole PR when `cardId` is null. Answer it from the code and the thread, in markdown, with `file:line` where it helps. Append `{ "at": <the event's at>, "question", "answer" }` to the card's `questions`, or to the top-level `questions`. When the question asks for another fix or another reply, also change `proposal` or `reply` and say so in the answer. A question is no go-ahead: the code, the branch and GitHub change only on a button. |
 | `EVENT {"type":"recheck"}` | Judge the card again from scratch and update it. Keep its status. |
 | `EVENT {"type":"dismiss"}` | Status `dismissed`. |
 
@@ -78,9 +79,11 @@ Act on the code, the branch or GitHub only for the matching `EVENT`. When the us
       "reply": "<draft reply>",
       "status": "new | applying | applied | tests-failed | committing | committed | replied | dismissed | outdated",
       "statusNote": "<test result, commit SHA or reply URL>",
-      "changes": "<git diff after apply>"
+      "changes": "<git diff after apply>",
+      "questions": [{ "at": "<at of the ask event>", "question": "<verbatim>", "answer": "<markdown>" }]
     }
-  ]
+  ],
+  "questions": ["<the same, for questions about the whole PR>"]
 }
 ```
 
