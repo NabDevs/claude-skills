@@ -14,7 +14,7 @@ const path = require('node:path');
 const { stateDirFor, readJson, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
-const EVENT_TYPES = new Set(['apply', 'commit', 'reply', 'dismiss', 'recheck']);
+const EVENT_TYPES = new Set(['apply', 'undo', 'commit', 'reply', 'dismiss', 'recheck']);
 const MAX_BODY = 1_000_000; // a button press carries the card the page showed, with its diffs
 const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
 

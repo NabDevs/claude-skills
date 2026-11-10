@@ -117,8 +117,8 @@ const STATUS = {
   new: { label: 'Waiting for you', buttons: ['apply', 'reply', 'recheck', 'dismiss'] },
   outdated: { label: 'Fix rewritten after a new commit', buttons: ['apply', 'reply', 'recheck', 'dismiss'] },
   applying: { label: 'Applying the fix…', busy: true },
-  applied: { label: 'Fix applied, not committed yet', buttons: ['commit', 'reply', 'recheck', 'dismiss'], step: 'commit' },
-  'tests-failed': { label: 'Tests fail with the fix', buttons: ['apply', 'reply', 'recheck', 'dismiss'], attention: true },
+  applied: { label: 'Fix applied, not committed yet', buttons: ['commit', 'undo', 'reply'], step: 'commit' },
+  'tests-failed': { label: 'Tests fail with the fix', buttons: ['undo', 'reply'], step: 'undo', attention: true },
   committing: { label: 'Committing and pushing…', busy: true },
   committed: { label: 'Committed and pushed, no reply yet', buttons: ['reply', 'recheck', 'dismiss'], step: 'reply' },
   replied: { label: 'Replied', done: true },
@@ -127,6 +127,7 @@ const STATUS = {
 // One row per button. confirm: the label of the second click, for an action that leaves this computer.
 const ACTION = {
   apply: { label: 'Apply fix', busy: 'Applying the fix…' },
+  undo: { label: 'Undo fix', busy: 'Taking the fix out again…' },
   commit: { label: 'Commit & push', busy: 'Committing and pushing…', confirm: 'Confirm: commit & push' },
   reply: { label: 'Post reply', busy: 'Posting the reply…', confirm: 'Confirm: post on GitHub' },
   recheck: { label: 'Judge again', busy: 'Judging again…', quiet: true },
@@ -242,7 +243,7 @@ function cardView(card) {
 
   if (!status.done) {
     if (hasFix) {
-      const at = STEPS.indexOf(step);
+      const at = Math.max(0, STEPS.indexOf(step));
       body.append(el('div', { class: 'steps' }, ...STEPS.flatMap((type, i) => [
         i ? el('span', {}, '›') : null,
         el('span', { class: i < at ? 'ok' : i === at ? 'now' : '' }, `${i < at ? '✓' : i + 1 + '.'} ${ACTION[type].label}`),
