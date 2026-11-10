@@ -1,63 +1,82 @@
 ---
 name: pr-companion
-description: Watch the user's own open pull request over time. Picks up each new review comment as it arrives, judges it, and shows the verdict, a proposed fix and a draft reply on a local page with optional buttons. Use for "houd mijn PR in de gaten", "watch my PR", "pr-companion", or when review comments on the user's PR must be followed as they come in rather than walked once.
+description: Watch the user's own open pull request while review comes in. Every new review comment gets a verdict, a proposed fix and a draft reply on a local page. Use for "watch my PR", "houd mijn PR in de gaten", or when review comments must be handled as they arrive rather than walked once.
 ---
 
 # PR companion
 
-A companion for the author of a pull request (PR). It watches the PR, judges every new review comment, and puts a card on a local page: the comment verbatim, the verdict, a proposed fix as a diff, and a draft reply. The user decides per card. Each button on the page is one decision; nothing reaches the code, the branch or GitHub without one.
+A **card** is one judged review comment on the local page: the comment verbatim, the verdict, a proposed fix and a draft reply. The user decides per card. Change the code, the branch or GitHub only for the matching `EVENT` line, or when the user asks for it in the chat.
 
-The skill is done when the PR is merged or closed, or when the user stops it in the chat.
+The companion runs until the pull request (PR) is merged or closed, or until the user stops it in the chat. Then stop the background process of step 2.
 
 ## Sources of truth
 
-Load these with the Skill tool before step 2. Their rules apply in full; this skill only adds the watching and the page.
+Load these with the Skill tool before step 2. Their rules apply in full; this skill adds only the watching and the page.
 
-- `external-integrations-basekit:pr-feedback-walk`: how to find the PR, how to judge a comment (its walk steps 1 to 4), how to commit a fix (step 6) and how to reply (Replying). The page replaces its terminal turn and its "stop and wait": the card is the turn, the button is the go-ahead.
-- `external-integrations-basekit:writing-style`: every draft reply.
-- `ai-basekit:commit`: the commit message, as `pr-feedback-walk` step 6 says.
+- `external-integrations-basekit:pr-feedback-walk`: "Finding the pull request", "The walk" and "Replying". The page replaces its terminal turn and its "stop and wait": the card is the turn, the button is the go-ahead.
+- `external-integrations-basekit:writing-style`: every draft reply and every answer.
+- `ai-basekit:commit`: the commit message.
 
 ## Steps
 
 ### 1. Find the PR
 
-Find it as `pr-feedback-walk` does: repository from `origin`, the open PR for the current branch, a number from the user wins. The PR author must be the authenticated `gh` user; for a PR by somebody else, point to `guided-pr-review` and stop.
+Find it as `pr-feedback-walk` "Finding the pull request" says; a number from the user wins. The PR must be the user's own, with its branch checked out here. For a PR by somebody else, point to `guided-pr-review` and stop. For another branch, ask the user to check it out.
 
-Done when you know `<owner>/<repo>`, the number, and that the PR branch is the one checked out here.
+Done when you know `<owner>/<repo>`, the number, and that `git branch --show-current` is the head branch of the PR.
 
 ### 2. Start the companion
 
-Run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as a persistent background process whose output lines wake you: the `Monitor` tool, or a background command you can watch. It writes to `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (or under `$XDG_STATE_HOME`).
+Run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as a background process whose output lines wake you: the `Monitor` tool. It checks the PR, prints `READY <url>`, and then prints the lines of step 3.
 
-It prints `READY <url>`. Give the user that URL in one line. The token after `#` is the page's key; the URL works only with it. The URL stays the same when the companion starts again for this PR.
+- `ERROR … already runs … (pid N)`: an earlier session left its companion. Stop that process and start again.
+- Another `ERROR` in place of `READY`: the process has stopped. Tell the user the reason and stop.
+- The process stops later without `CLOSED`, for example at a time limit of the harness: start it again in silence. The URL stays the same and the page connects again.
 
-When it prints `ERROR a companion for this pull request already runs … (pid N)`, an earlier session left its process: stop that process and start again.
+After `READY`, write the `pr` block to `companion.json` in `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (under `$XDG_STATE_HOME` when that is set). A file from an earlier session keeps its cards; give a card that was left in `applying` or `committing` the status that the working tree and `git log` show.
 
-Done when the user has the URL.
+Done when `companion.json` has the `pr` block and the user has the whole URL, with the token after `#`, in one line.
 
 ### 3. Handle each line
 
-Handle every line as it arrives. Write the result to `companion.json` first; the page reads it every two seconds.
+Handle every line in the order it arrives. A line is done when `companion.json` holds its result; write in the chat only after that. When the work takes more than a moment, put what you do in `activity` ("Judging 13 open comments") and remove it when you are idle.
 
 | Line | What to do |
 |---|---|
-| `OPEN` / `NEW <threadId> …` | Read the whole thread. Judge it with `pr-feedback-walk` walk steps 1 to 4: comment verbatim, threads on the same problem in one card, the claim checked against the code with `file:line`, then a fix or a pushback. Write the fix as a unified diff that you do not apply. Draft the reply with `writing-style`. Add or update the card with status `new`. |
-| `NEW issue <commentId> …` / `NEW review <reviewId> …` | Same, for a comment on the PR conversation or the summary text of a review: `path` is null. Skip it when it is no review feedback (thanks, a question already answered); then add nothing. |
-| `RESOLVED <threadId>` | Somebody resolved the thread on GitHub. When every thread of a card is resolved, set the card to `dismissed` with `statusNote` "Resolved on GitHub". |
-| `HEAD <sha>` | A new commit. For each open card, check the code again: when the commit fixed it, say so in `take`; when the diff no longer applies, rewrite it and set status `outdated`. |
-| `ERROR <message>` | GitHub could not be read. Tell the user in one line. After `READY` the watcher retries by itself. Before `READY` the process has stopped: for a PR by somebody else, point to `guided-pr-review`; else solve the cause and start it again. |
-| `CLOSED` | Tell the user in one line that the PR is merged or closed and the companion stopped. |
-| `EVENT {"type":"apply"}` | Check first that the PR branch is still checked out and that the files of the fix have no other uncommitted changes; if either fails, explain it in `statusNote` and change nothing. Otherwise apply the card's diff, run the tests and linter this repository's `AGENTS.md` or `CLAUDE.md` names, and put `git diff` of the changed files in `changes` and the result in `statusNote`. Status `applied`, or `tests-failed`. |
-| `EVENT {"type":"undo"}` | The fix is in the working tree (`applied` or `tests-failed`). Take the card's `changes` out again with a reverse apply of that diff and touch nothing else. Remove `changes`, say what you did in `statusNote`. Status `new`. |
-| `EVENT {"type":"commit"}` | Stage only the files in the card's `changes`, commit as `pr-feedback-walk` step 6 says, and push. The user saw `changes` on the page before pressing the button: that is the approval step 6 asks for. Put the commit SHA in `statusNote`. Status `committed`. |
-| `EVENT {"type":"reply","reply":"…"}` | Post the `reply` text from the event exactly as it is, as `pr-feedback-walk` Replying says: in the thread, or as a PR comment for a conversation comment. Leave the thread open. Put the reply URL in `statusNote`. Status `replied`. |
-| `EVENT {"type":"ask","question":"…"}` | A question from the page: about the card in `cardId`, or about the whole PR when `cardId` is null. Answer it from the code and the thread, in markdown, with `file:line` where it helps. Append `{ "at": <the event's at>, "question", "answer" }` to the card's `questions`, or to the top-level `questions`. When the question asks for another fix or another reply, also change `proposal` or `reply` and say so in the answer. A question is no go-ahead: the code, the branch and GitHub change only on a button. |
-| `EVENT {"type":"recheck"}` | Judge the card again from scratch and update it. Keep its status. |
-| `EVENT {"type":"dismiss"}` | Status `dismissed`. |
+| `OPEN <threadId> …` / `NEW <threadId> …` | Judge the thread (see below). For a thread that has a card, update that card. |
+| `NEW issue <commentId> …` / `NEW review <reviewId> …` | A comment on the PR conversation, or the summary of a review. Judge it the same way, with `path` null. Add no card when it holds no review feedback (thanks, a plain approval). |
+| `RESOLVED <threadId>` | When every thread of a card is resolved, set the card to `dismissed` with `statusNote` "Resolved on GitHub". A card with its fix in the working tree (`applied`, `tests-failed`) keeps its status and gets only the note. |
+| `HEAD <sha>` | Set `pr.headSha`. For a commit you did not push for a card, check the code again for each card in `new` or `outdated`: when the commit fixed it, say so in `take`; when the diff no longer applies, rewrite it and set `outdated`. |
+| `ERROR <message>` | GitHub could not be read; the watcher tries again by itself. Tell the user in one line. |
+| `CLOSED <state>` | Tell the user in one line that the PR is merged or closed and that the companion stopped. |
 
-Handle lines in silence: the page shows the result. Write in the chat only for `READY`, `ERROR` and `CLOSED`, for one line per new card ("New comment from `<author>` on `<path:line>`, on the page"), and when the user asks something there.
+#### Judging a thread
 
-Act on the code, the branch or GitHub only for the matching `EVENT`. When the user asks for the same in the chat, that counts too.
+1. Read the whole thread.
+2. Do `pr-feedback-walk` walk steps 1 to 4: the comment verbatim, threads on the same problem in one card, the claim checked against the code with `file:line`, then a fix or a pushback.
+3. Write the fix as a unified diff in `proposal.diff`. The working tree stays as it is until `apply`. A pushback has no `proposal`.
+4. Draft the reply with `writing-style`.
+5. Write the card with status `new`. A card with its fix in the working tree (`applied`, `tests-failed`) keeps its status and its `changes`.
+
+Done when the card has `comment`, `verdict`, a `take` with at least one `file:line`, and `reply`.
+
+#### Events from the page
+
+An `EVENT` line is JSON with `type`, `cardId` and `at`. The server passes a button press only for the card exactly as the page showed it, so the press is the user's approval of that card.
+
+Handle a press only when the card has a status from the "From" column. For another status, for example a second `reply` on a `replied` card, write why in `statusNote` and do nothing else. End every event with a write to the card that sets `handled` to the `at` of the event: that write gives the page its buttons back.
+
+| `type` | From | What to do | Status after |
+|---|---|---|---|
+| `apply` | `new`, `outdated` | Set `applying`. Check that the PR branch is checked out and that the files of the fix have no uncommitted changes; if one fails, say so in `statusNote` and set the earlier status again. Apply `proposal.diff`, run the tests and the linter that the `AGENTS.md` or `CLAUDE.md` of this repository names, put `git diff` of the changed files in `changes` and the result in `statusNote`. | `applied` or `tests-failed` |
+| `undo` | `applied`, `tests-failed` | Take `changes` out of the working tree with a reverse apply of that diff, and touch nothing else. Remove `changes`. | `new` |
+| `commit` | `applied` | Compare `git diff` of the files with `changes`. When they differ, put the new diff in `changes`, say in `statusNote` that the user must look again, and keep `applied`. When they are the same: set `committing`, stage only those files, commit as `pr-feedback-walk` step 6 and `ai-basekit:commit` say, and push. The press is the go-ahead that step 6 asks for. Put the commit SHA in `statusNote`. | `committed` |
+| `reply` | `new`, `outdated`, `committed` | Post the `reply` text of the event exactly as it is: in the thread as `pr-feedback-walk` "Replying" says, or with `gh pr comment` for a conversation comment or a review summary. Leave the thread open. Put the URL of the reply in `statusNote`. | `replied` |
+| `recheck` | `new`, `outdated`, `committed` | Judge the card again from scratch. | the same |
+| `dismiss` | `new`, `outdated`, `committed` | Nothing else. | `dismissed` |
+| `ask` | any | A `cardId` of null means the whole PR. Answer the `question` from the code and the thread, in markdown, with `file:line` where it helps. Append `{ at, question, answer }` to the `questions` of the card, or to the top-level `questions`. When the question asks for another fix or another reply, change `proposal` or `reply` too and say so in the answer. A question is no go-ahead for the code, the branch or GitHub. | the same |
+
+Handle lines in silence: the page shows the result. Write in the chat only for `READY`, `ERROR` and `CLOSED`, for one line per new card ("New comment from `<author>` on `<path:line>`, on the page"), and to answer what the user asks there. Ask the user in plain chat text, without a tool that waits for an answer, so that lines keep being handled. When the user says the page waits, read the output of the process: a line that did not wake you may be there.
 
 ## companion.json
 
@@ -65,11 +84,13 @@ Act on the code, the branch or GitHub only for the matching `EVENT`. When the us
 {
   "pr": { "repo": "owner/name", "number": 123, "title": "…", "url": "…", "headSha": "…" },
   "updatedAt": "<ISO time>",
+  "activity": "<what you do now; absent when idle>",
+  "questions": [{ "at": "<at of the ask event>", "question": "<verbatim>", "answer": "<markdown>" }],
   "cards": [
     {
-      "id": "<GraphQL ID of the first thread, or of the conversation comment>",
+      "id": "<GraphQL ID of the first thread, the conversation comment or the review>",
       "threadIds": ["<every thread this card answers>"],
-      "author": "<login>", "url": "<link to the comment>",
+      "author": "<login>", "url": "<https link to the comment>",
       "path": "src/File.php", "line": 57,
       "comment": "<first comment, verbatim>",
       "replies": [{ "author": "<login>", "body": "<verbatim>" }],
@@ -77,14 +98,14 @@ Act on the code, the branch or GitHub only for the matching `EVENT`. When the us
       "take": "<why, with file:line>",
       "proposal": { "diff": "<unified diff, not applied>" },
       "reply": "<draft reply>",
-      "status": "new | applying | applied | tests-failed | committing | committed | replied | dismissed | outdated",
-      "statusNote": "<test result, commit SHA or reply URL>",
-      "changes": "<git diff after apply>",
-      "questions": [{ "at": "<at of the ask event>", "question": "<verbatim>", "answer": "<markdown>" }]
+      "status": "new | outdated | applying | applied | tests-failed | committing | committed | replied | dismissed",
+      "statusNote": "<test result, commit SHA, reply URL, or why an event was skipped>",
+      "changes": "<git diff of the applied fix>",
+      "handled": "<at of the last event handled>",
+      "questions": ["<as the top-level questions, about this card>"]
     }
-  ],
-  "questions": ["<the same, for questions about the whole PR>"]
+  ]
 }
 ```
 
-`proposal` is absent for a pushback. `reply` is present on every card that is not `dismissed`. Set `applying` or `committing` before long work, so the page shows it.
+`proposal` is absent for a pushback. `reply` is present on every card that is not `dismissed`. `changes` is present only while the fix is in the working tree or in a commit.
