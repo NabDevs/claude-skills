@@ -39,8 +39,8 @@ These come from the user and define what the skill must do.
 - The page is built for a tab that stays open: the tab title counts the open cards, a new card lights up, done cards collapse under "Done", and one button collapses everything into a list. The header says whether the page is connected.
 - Each card shows the next step (apply, commit and push, reply) and makes that button the primary one. The two buttons that leave the computer, "Commit & push" and "Post reply", need a second click, because a reply on GitHub notifies people and cannot be taken back.
 - A button press shows as busy until the agent changes the card. `page.html` has one table of statuses and one of buttons; a status that the table does not know still gets "Judge again" and "Dismiss".
-- A button press is the approval that `pr-feedback-walk` step 6 asks for before a commit, because the page shows the real `git diff` before the commit button appears.
-- State per pull request lives in `~/.local/state/pr-companion/<owner>/<repo>/<pr>/` (or under `$XDG_STATE_HOME`): `watch-state.json`, `companion.json`, `events.jsonl`.
+- A button press is the approval that `pr-feedback-walk` step 6 asks for before a commit, because the page shows the real `git diff` before the commit button appears. To make that true, the page sends the card as it showed it with every press, and the server answers 409 when `companion.json` holds another version of that card. The user then sees the new version and presses again.
+- State per pull request lives in `~/.local/state/pr-companion/<owner>/<repo>/<pr>/` (or under `$XDG_STATE_HOME`): `watch-state.json`, `companion.json`, `server.json`. Button presses are not kept in a file.
 
 ### Test status (2026-11-10)
 

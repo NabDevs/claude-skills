@@ -15,12 +15,12 @@ const { stateDirFor, readJson, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
 const EVENT_TYPES = new Set(['apply', 'commit', 'reply', 'dismiss', 'recheck']);
+const MAX_BODY = 1_000_000; // a button press carries the card the page showed, with its diffs
 const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 // The server for one pull request. stateDir holds companion.json; emit gets each line for the agent.
 function createApp({ stateDir, token, emit }) {
   const dataFile = path.join(stateDir, 'companion.json');
-  const eventsFile = path.join(stateDir, 'events.jsonl');
 
   return http.createServer((req, res) => {
     const send = (status, body, type = 'text/plain') => {
@@ -41,14 +41,16 @@ function createApp({ stateDir, token, emit }) {
     if (route !== 'POST /event') return send(404, 'not found');
 
     let raw = '';
-    req.on('data', (chunk) => { raw += chunk; if (raw.length > 100_000) req.destroy(); });
+    req.on('data', (chunk) => { raw += chunk; if (raw.length > MAX_BODY) req.destroy(); });
     req.on('end', () => {
       let event;
       try { event = JSON.parse(raw); } catch { return send(400, 'bad json'); }
       if (!EVENT_TYPES.has(event?.type) || typeof event.cardId !== 'string') return send(400, 'bad event');
+      // A press approves what the page showed, so it only counts for the card as it is now.
+      const current = (readJson(dataFile)?.cards ?? []).find((card) => card.id === event.cardId);
+      if (!current || JSON.stringify(current) !== JSON.stringify(event.card)) return send(409, 'card changed');
       const clean = { type: event.type, cardId: event.cardId, at: new Date().toISOString() };
       if (event.type === 'reply') clean.reply = String(event.reply ?? '');
-      fs.appendFileSync(eventsFile, JSON.stringify(clean) + '\n');
       emit(`EVENT ${JSON.stringify(clean)}`);
       send(204, '');
     });

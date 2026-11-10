@@ -54,13 +54,28 @@ test('a request that cannot be read gets an answer and the server keeps running'
   assert.equal((await get('/data')).status, 200);
 });
 
+const CARD = { id: 'c1', status: 'new', reply: 'Draft', proposal: { diff: '-a\n+b' } };
+const writeCards = (cards) => fs.writeFileSync(path.join(stateDir, 'companion.json'), JSON.stringify({ cards }));
+
 test('a button press reaches the agent as one EVENT line with only the known fields', async () => {
   lines.length = 0;
-  assert.equal((await post({ type: 'reply', cardId: 'c1', reply: 'Fixed.\nThanks', extra: 'dropped' })).ok, true);
+  writeCards([CARD]);
+  assert.equal((await post({ type: 'reply', cardId: 'c1', card: CARD, reply: 'Fixed.\nThanks', extra: 'dropped' })).ok, true);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^EVENT \{/);
   assert.equal(lines[0].includes('\n'), false);
   const event = JSON.parse(lines[0].slice('EVENT '.length));
   assert.deepEqual(Object.keys(event), ['type', 'cardId', 'at', 'reply']);
   assert.equal(event.reply, 'Fixed.\nThanks');
+});
+
+test('a press on a card that changed since the page showed it is refused', async () => {
+  lines.length = 0;
+  writeCards([{ ...CARD, proposal: { diff: '-a\n+c' } }]);
+  assert.equal((await post({ type: 'apply', cardId: 'c1', card: CARD })).status, 409);
+  assert.equal((await post({ type: 'apply', cardId: 'c1' })).status, 409);
+  assert.equal((await post({ type: 'apply', cardId: 'gone', card: CARD })).status, 409);
+  fs.writeFileSync(path.join(stateDir, 'companion.json'), '{"cards":[{"id":"c1"');
+  assert.equal((await post({ type: 'apply', cardId: 'c1', card: CARD })).status, 409);
+  assert.deepEqual(lines, []);
 });

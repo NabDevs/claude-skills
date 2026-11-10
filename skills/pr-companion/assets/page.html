@@ -174,18 +174,24 @@ async function sendEvent(card, type) {
   if (ACTION[type].confirm && armed[card.id] !== type) { armed[card.id] = type; return render(); }
   delete armed[card.id];
   delete failed[card.id];
-  const body = { type, cardId: card.id };
+  const body = { type, cardId: card.id, card }; // the card as shown: the server refuses a press on a card that changed
   if (type === 'reply') body.reply = drafts[card.id]?.text ?? card.reply ?? '';
   pending[card.id] = { type, snapshot: JSON.stringify(card) };
   document.activeElement?.blur();
   render();
+  let problem = '';
   try {
     const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`error ${res.status}`);
-  } catch (error) {
+    if (res.status === 409) problem = 'This card changed after the page showed it. Look at it again, then press once more.';
+    else if (!res.ok) problem = `Not sent (error ${res.status}).`;
+  } catch {
+    problem = 'Not sent: the companion does not answer.';
+  }
+  if (problem) {
     delete pending[card.id];
-    failed[card.id] = `Not sent (${error.message}). Is the companion still running?`;
+    failed[card.id] = problem;
     render();
+    poll();
   }
 }
 
