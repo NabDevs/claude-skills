@@ -11,7 +11,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { stateDirFor, watch, cli } = require('./watch.js');
+const { stateDirFor, readJson, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
 const EVENT_TYPES = new Set(['apply', 'commit', 'reply', 'dismiss', 'recheck']);
@@ -55,18 +55,44 @@ function createApp({ stateDir, token, emit }) {
   });
 }
 
+// True when a companion with this token answers on the port.
+async function answers(port, token) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/data`, { headers: { 'X-Companion-Token': token }, signal: AbortSignal.timeout(1000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Listens on the given port, or on a free one when that port is taken, and resolves the port.
+function listen(server, port) {
+  return new Promise((resolve, reject) => {
+    server.once('error', (error) => (port && error.code === 'EADDRINUSE' ? listen(server, 0).then(resolve, reject) : reject(error)));
+    server.listen(port, '127.0.0.1', () => resolve(server.address().port));
+  });
+}
+
 async function main(target) {
   const stateDir = stateDirFor(target); // created by the first look at the pull request
-  const token = crypto.randomBytes(16).toString('hex');
+  // The port and the token of the previous session are used again, so the URL stays the same
+  // and a tab that is still open finds the page again.
+  const serverFile = path.join(stateDir, 'server.json');
+  const saved = readJson(serverFile) ?? {};
+  const token = saved.token || crypto.randomBytes(16).toString('hex');
+  const urlOn = (port) => `http://127.0.0.1:${port}/#${token}`;
+  // Two companions on one pull request would each take a part of the new comments.
+  if (saved.port && await answers(saved.port, token)) {
+    throw new Error(`a companion for this pull request already runs at ${urlOn(saved.port)} (pid ${saved.pid}): stop that process first`);
+  }
   const server = createApp({ stateDir, token, emit: console.log });
 
   // The page starts after the first look at the pull request, so READY means the watch works.
-  await watch(target, console.log, () => new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      console.log(`READY http://127.0.0.1:${server.address().port}/#${token}`);
-      resolve();
-    });
-  }));
+  await watch(target, console.log, async () => {
+    const port = await listen(server, saved.port || 0);
+    fs.writeFileSync(serverFile, JSON.stringify({ port, token, pid: process.pid }), { mode: 0o600 });
+    console.log(`READY ${urlOn(port)}`);
+  });
   server.close();
   server.closeAllConnections();
 }

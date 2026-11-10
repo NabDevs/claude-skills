@@ -29,7 +29,9 @@ Done when you know `<owner>/<repo>`, the number, and that the PR branch is the o
 
 Run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as a persistent background process whose output lines wake you: the `Monitor` tool, or a background command you can watch. It writes to `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (or under `$XDG_STATE_HOME`).
 
-It prints `READY <url>`. Give the user that URL in one line. The token after `#` is the page's key; the URL works only with it.
+It prints `READY <url>`. Give the user that URL in one line. The token after `#` is the page's key; the URL works only with it. The URL stays the same when the companion starts again for this PR.
+
+When it prints `ERROR a companion for this pull request already runs … (pid N)`, an earlier session left its process: stop that process and start again.
 
 Done when the user has the URL.
 
