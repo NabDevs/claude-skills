@@ -1,79 +1,140 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PR companion</title>
+<link rel="icon" href="data:,">
 <style>
   :root {
-    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #667085; --border: #d9dde5;
-    --holds: #1a7f37; --nothold: #b42318; --unsure: #9a6700; --accent: #2457d6;
+    color-scheme: light dark;
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5f6b7e; --border: #d9dde5;
+    --holds: #1a7f37; --nothold: #b42318; --unsure: #8a5d00; --accent: #2457d6; --on-accent: #ffffff;
     --add: #e6f4ea; --del: #fdecea; --code: #f2f4f7;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --border: #2e3644;
-      --holds: #4ac26b; --nothold: #f97066; --unsure: #e3b341; --accent: #7aa2ff;
+      --holds: #4ac26b; --nothold: #f97066; --unsure: #e3b341; --accent: #7aa2ff; --on-accent: #0d1320;
       --add: #12301d; --del: #3a1714; --code: #141920;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  header { padding: 16px; border-bottom: 1px solid var(--border); background: var(--card); }
-  header h1 { font-size: 18px; margin: 0 0 4px; }
-  header .meta { color: var(--muted); font-size: 13px; }
   a { color: var(--accent); }
-  main { max-width: 920px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
-  .counts { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  .card.done { opacity: .6; }
-  .card h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .where { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--muted); font-weight: 400; }
-  blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }
-  .reply-in-thread { font-size: 13px; color: var(--muted); margin-left: 12px; }
-  .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; font-weight: 600; }
-  .holds { color: var(--holds); } .does-not-hold { color: var(--nothold); } .unsure { color: var(--unsure); }
-  .status { font-size: 12px; color: var(--muted); }
-  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 4px; }
-  .take { white-space: pre-wrap; overflow-wrap: anywhere; }
-  pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 0; }
-  pre span { display: block; white-space: pre; }
-  pre .a { background: var(--add); } pre .d { background: var(--del); }
-  textarea { width: 100%; min-height: 90px; font: inherit; color: inherit; background: var(--bg);
-    border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding-inline: 16px; }
+
+  header { position: sticky; top: 0; z-index: 1; padding: 10px 0; border-bottom: 1px solid var(--border); background: var(--card); }
+  .top { display: flex; gap: 12px; align-items: baseline; }
+  h1 { font-size: 17px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conn { font-size: 13px; color: var(--muted); text-align: right; }
+  .conn::before { content: "●"; margin-right: 6px; }
+  .conn.ok::before { color: var(--holds); } .conn.bad { color: var(--nothold); }
+  .meta { display: flex; gap: 4px 14px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .meta b, .activity { color: var(--text); }
+  .activity { display: flex; gap: 6px; align-items: center; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-block: 16px 48px; }
+  .section { font-size: 13px; color: var(--muted); margin: 12px 0 0; font-weight: 600; }
+  .empty { color: var(--muted); text-align: center; padding: 48px 0; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; }
+  .card.holds { border-left-color: var(--holds); } .card.does-not-hold { border-left-color: var(--nothold); } .card.unsure { border-left-color: var(--unsure); }
+  .card.fresh { animation: fresh 2.5s ease-out; }
+  @keyframes fresh { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 3px transparent; } }
+  summary { display: flex; gap: 6px 10px; flex-wrap: wrap; align-items: center; padding: 10px 14px; cursor: pointer; list-style: none; border-radius: 10px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸"; color: var(--muted); width: 12px; font-size: 16px; line-height: 1; }
+  .card[open] > summary::before { content: "▾"; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; font-weight: 600; white-space: nowrap; }
+  .badge.holds { color: var(--holds); } .badge.does-not-hold { color: var(--nothold); } .badge.unsure { color: var(--unsure); }
+  .where { font: 13px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; min-width: 0; }
+  .author { font-size: 13px; color: var(--muted); }
+  .status { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .status.attention { color: var(--text); font-weight: 600; }
+  .spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin, .card.fresh { animation: none; } }
+
+  .body { padding: 0 14px 14px; }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 16px 0 4px; }
+  .quote { border-left: 3px solid var(--border); padding: 2px 12px; margin: 4px 0 8px; }
+  .quote.reply { margin-left: 16px; font-size: 14px; }
+  .who { font-size: 13px; color: var(--muted); }
+  .who b { color: var(--text); }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  code, pre { font: 12.5px/1.5 ui-monospace, Menlo, monospace; background: var(--code); border-radius: 6px; }
+  code { padding: 1px 4px; }
+  pre { padding: 8px; overflow-x: auto; margin: 4px 0; white-space: pre; }
+  pre.diff > span { display: block; width: max-content; min-width: 100%; }
+  pre .add { background: var(--add); } pre .del { background: var(--del); }
+  .note { padding: 8px 12px; border-radius: 6px; background: var(--code); }
+  .note.bad { background: var(--del); } .note.good { background: var(--add); }
+  textarea { display: block; width: 100%; min-height: 64px; max-height: 320px; field-sizing: content; resize: vertical; font: inherit; color: inherit;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .steps { display: flex; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 16px; }
+  .steps .now { color: var(--text); font-weight: 600; } .steps .ok { color: var(--holds); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+  .spacer { margin-left: auto; }
   button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--border); background: var(--card); color: var(--text); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .5; cursor: default; }
-  .busy { font-size: 13px; color: var(--muted); }
-  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
-  .error { color: var(--nothold); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button.quiet { border-color: transparent; background: none; color: var(--muted); }
+  button.link { border: 0; background: none; padding: 0; color: var(--accent); font-size: inherit; text-decoration: underline; }
+  button:disabled, textarea:disabled { opacity: .5; cursor: default; }
+  .error { color: var(--nothold); font-size: 13px; margin-top: 8px; }
 </style>
 </head>
 <body>
-<header>
-  <h1 id="title">PR companion</h1>
-  <div class="meta" id="meta">Laden…</div>
-</header>
-<main id="main"></main>
+<header><div class="wrap">
+  <div class="top">
+    <h1 id="title">PR companion</h1>
+    <button class="quiet" id="fold" hidden></button>
+    <span class="conn" id="conn" role="status">Loading…</span>
+  </div>
+  <div class="meta" id="meta"></div>
+</div></header>
+<main class="wrap" id="main"></main>
 <script>
 'use strict';
-const token = location.hash.slice(1);
-const headers = { 'X-Companion-Token': token };
-const drafts = {};      // cardId -> reply text the user is editing
-const pending = {};     // cardId -> { type, status } of the last button press
+const headers = { 'X-Companion-Token': location.hash.slice(1) };
+const drafts = {};        // cardId -> { text, base }: the reply the user is editing, and the draft it started from
+const pending = {};       // cardId -> { type, snapshot }: the last button press, until the agent changes the card
+const armed = {};         // cardId -> the action that waits for a second click
+const opened = {};        // cardId -> open or closed, once the user chose
+const failed = {};        // cardId -> why the last button press was not sent
+const views = new Map();  // cardId -> { key, node }: an unchanged card keeps its node, with focus and selection
+let known = null;         // card ids on the page so far; a later one gets a short highlight
 let lastJson = '';
-let stale = false;   // a render was skipped while the user typed
+let data = { cards: [] };
 
-const VERDICT = { holds: 'Terecht', 'does-not-hold': 'Niet terecht', unsure: 'Twijfel' };
+const VERDICT = { holds: 'Holds', 'does-not-hold': 'Does not hold', unsure: 'Unclear' };
+// One row per card status: its label, the buttons it offers in order, and whether the card is done or Claude is at work.
 const STATUS = {
-  new: 'Nieuw', applying: 'Fix wordt toegepast…', applied: 'Fix toegepast, nog niet gecommit',
-  'tests-failed': 'Tests falen na de fix', committing: 'Bezig met commit…', committed: 'Gecommit en gepusht',
-  replied: 'Beantwoord', dismissed: 'Genegeerd', outdated: 'Verouderd door een nieuwe commit',
+  new: { label: 'Waiting for you', buttons: ['apply', 'reply', 'recheck', 'dismiss'] },
+  outdated: { label: 'Fix rewritten after a new commit', buttons: ['apply', 'reply', 'recheck', 'dismiss'] },
+  applying: { label: 'Applying the fix…', busy: true },
+  applied: { label: 'Fix applied, not committed yet', buttons: ['commit', 'reply', 'recheck', 'dismiss'], step: 'commit' },
+  'tests-failed': { label: 'Tests fail with the fix', buttons: ['apply', 'reply', 'recheck', 'dismiss'], attention: true },
+  committing: { label: 'Committing and pushing…', busy: true },
+  committed: { label: 'Committed and pushed, no reply yet', buttons: ['reply', 'recheck', 'dismiss'], step: 'reply' },
+  replied: { label: 'Replied', done: true },
+  dismissed: { label: 'Dismissed', done: true },
 };
-const DONE = new Set(['replied', 'dismissed']);
+// One row per button. confirm: the label of the second click, for an action that leaves this computer.
+const ACTION = {
+  apply: { label: 'Apply fix', busy: 'Applying the fix…' },
+  commit: { label: 'Commit & push', busy: 'Committing and pushing…', confirm: 'Confirm: commit & push' },
+  reply: { label: 'Post reply', busy: 'Posting the reply…', confirm: 'Confirm: post on GitHub' },
+  recheck: { label: 'Judge again', busy: 'Judging again…', quiet: true },
+  dismiss: { label: 'Dismiss', busy: 'Dismissing…', quiet: true },
+};
+const STEPS = ['apply', 'commit', 'reply'];
+const statusOf = (card) => STATUS[card.status] || { label: card.status || '', buttons: ['recheck', 'dismiss'] };
+const isDone = (card) => Boolean(statusOf(card).done);
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -86,114 +147,194 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// A link, or nothing when the address is not an https one.
+const link = (url, label) => (/^https:\/\//.test(url || '') ? el('a', { href: url, target: '_blank', rel: 'noopener' }, label) : null);
+
+// Shows `code` and ``` blocks as code. Every piece is still a text node.
+function rich(text) {
+  const box = el('div', { class: 'text' });
+  String(text).split(/```[^\n]*\n([\s\S]*?)```/).forEach((part, i) => {
+    if (i % 2) return box.append(el('pre', {}, part.replace(/\n$/, '')));
+    part.split(/`([^`\n]+)`/).forEach((piece, j) => box.append(j % 2 ? el('code', {}, piece) : piece));
+  });
+  return box;
+}
+
 function diffView(text) {
-  const pre = el('pre');
-  for (const line of text.split('\n')) {
-    const cls = line.startsWith('+') && !line.startsWith('+++') ? 'a'
-      : line.startsWith('-') && !line.startsWith('---') ? 'd' : '';
+  const pre = el('pre', { class: 'diff' });
+  for (const line of String(text).split('\n')) {
+    const cls = line.startsWith('+') && !line.startsWith('+++') ? 'add'
+      : line.startsWith('-') && !line.startsWith('---') ? 'del' : '';
     pre.append(el('span', cls ? { class: cls } : {}, line || ' '));
   }
   return pre;
 }
 
 async function sendEvent(card, type) {
+  if (ACTION[type].confirm && armed[card.id] !== type) { armed[card.id] = type; return render(); }
+  delete armed[card.id];
+  delete failed[card.id];
   const body = { type, cardId: card.id };
-  if (type === 'reply') body.reply = drafts[card.id] ?? card.reply ?? '';
-  pending[card.id] = { type, status: card.status };
-  render(JSON.parse(lastJson));
-  const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) { delete pending[card.id]; alertLine(`Versturen mislukt (${res.status})`); }
-}
-
-function alertLine(text) {
-  document.getElementById('meta').append(el('span', { class: 'error' }, ' · ' + text));
+  if (type === 'reply') body.reply = drafts[card.id]?.text ?? card.reply ?? '';
+  pending[card.id] = { type, snapshot: JSON.stringify(card) };
+  document.activeElement?.blur();
+  render();
+  try {
+    const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`error ${res.status}`);
+  } catch (error) {
+    delete pending[card.id];
+    failed[card.id] = `Not sent (${error.message}). Is the companion still running?`;
+    render();
+  }
 }
 
 function cardView(card) {
-  const done = DONE.has(card.status);
-  const node = el('article', { class: 'card' + (done ? ' done' : '') });
+  const status = statusOf(card);
+  const wait = pending[card.id];
+  const busy = Boolean(wait) || Boolean(status.busy);
+  const hasFix = Boolean(card.proposal?.diff);
+  const step = hasFix ? status.step || 'apply' : 'reply'; // the button that brings the card further
 
-  node.append(el('h2', {},
-    el('span', {}, card.author || 'onbekend'),
-    el('span', { class: 'where' }, card.path ? `${card.path}:${card.line ?? '?'}` : 'PR-gesprek'),
+  const node = el('details', { class: 'card ' + (card.verdict || '') });
+  node.open = opened[card.id] ?? !status.done;
+  node.append(el('summary', { onclick: () => { opened[card.id] = !node.open; } },
     card.verdict ? el('span', { class: 'badge ' + card.verdict }, VERDICT[card.verdict] || card.verdict) : null,
-    el('span', { class: 'status' }, STATUS[card.status] || card.status || ''),
-    card.url ? el('a', { href: card.url, target: '_blank', rel: 'noopener' }, 'GitHub') : null,
+    el('span', { class: 'where' }, card.path ? `${card.path}:${card.line ?? '?'}` : 'PR conversation'),
+    el('span', { class: 'author' }, card.author || 'unknown'),
+    el('span', { class: 'status' + (status.attention ? ' attention' : '') }, busy ? el('span', { class: 'spin' }) : null, wait ? ACTION[wait.type].busy : status.label),
   ));
 
-  node.append(el('blockquote', {}, card.comment || ''));
-  for (const r of card.replies || []) node.append(el('div', { class: 'reply-in-thread' }, `${r.author}: ${r.body}`));
-
-  if (card.take) node.append(el('h3', {}, 'Oordeel'), el('div', { class: 'take' }, card.take));
-  if (card.proposal?.diff && card.status !== 'applied' && card.status !== 'committed') {
-    node.append(el('h3', {}, 'Voorgestelde fix'), diffView(card.proposal.diff));
+  const body = el('div', { class: 'body' });
+  body.append(el('div', { class: 'quote' },
+    el('div', { class: 'who' }, el('b', {}, card.author || 'unknown'), ' wrote · ', link(card.url, 'open on GitHub')),
+    rich(card.comment || '')));
+  for (const r of card.replies || []) {
+    body.append(el('div', { class: 'quote reply' }, el('div', { class: 'who' }, el('b', {}, r.author || 'unknown')), rich(r.body || '')));
   }
-  if (card.changes) node.append(el('h3', {}, 'Toegepaste wijziging'), diffView(card.changes));
-  if (card.statusNote) node.append(el('h3', {}, 'Resultaat'), el('div', { class: 'take' }, card.statusNote));
-
-  if (!done && card.reply != null) {
-    const area = el('textarea', { 'aria-label': 'Concept-reply' });
-    area.value = drafts[card.id] ?? card.reply;
-    area.addEventListener('input', () => { drafts[card.id] = area.value; });
-    node.append(el('h3', {}, 'Concept-reply (pas aan wat je wilt)'), area);
+  if (card.take) body.append(el('h3', {}, 'Claude’s verdict'), rich(card.take));
+  if (card.changes) body.append(el('h3', {}, 'Applied change'), diffView(card.changes));
+  else if (hasFix) body.append(el('h3', {}, 'Proposed fix (not applied yet)'), diffView(card.proposal.diff));
+  if (card.statusNote) {
+    const tone = status.attention ? ' bad' : ['applied', 'committed', 'replied'].includes(card.status) ? ' good' : '';
+    body.append(el('h3', {}, 'Result'), el('div', { class: 'note' + tone }, link(card.statusNote, card.statusNote) || rich(card.statusNote)));
   }
 
-  if (!done) {
-    const busy = pending[card.id];
-    const actions = el('div', { class: 'actions' });
-    const btn = (label, type, primary) => el('button', { class: primary ? 'primary' : '', onclick: () => sendEvent(card, type), ...(busy ? { disabled: '' } : {}) }, label);
-    if (card.proposal?.diff && ['new', 'outdated', 'tests-failed'].includes(card.status)) actions.append(btn('Fix toepassen', 'apply', true));
-    if (card.status === 'applied') actions.append(btn('Commit & push', 'commit', true));
-    if (card.reply != null) actions.append(btn('Reply plaatsen', 'reply'));
-    actions.append(btn('Opnieuw beoordelen', 'recheck'));
-    actions.append(btn('Negeren', 'dismiss'));
-    if (busy) actions.append(el('span', { class: 'busy' }, 'Claude is ermee bezig…'));
-    node.append(actions);
+  if (!status.done && card.reply != null) {
+    const draft = drafts[card.id];
+    const area = el('textarea', { 'aria-label': 'Draft reply', rows: 3 });
+    area.value = draft?.text ?? card.reply;
+    area.disabled = busy;
+    area.addEventListener('input', () => { drafts[card.id] = { text: area.value, base: draft?.base ?? card.reply }; });
+    area.addEventListener('blur', () => render());
+    const reset = () => { delete drafts[card.id]; render(); };
+    body.append(el('h3', {}, 'Draft reply'), area, el('div', { class: 'hint' },
+      draft && draft.base !== card.reply ? 'Claude wrote a new draft; this is still your text. '
+        : 'Edit it as you like. Nothing goes to GitHub until you press Post reply. ',
+      draft && draft.text !== card.reply ? el('button', { class: 'link', onclick: reset }, 'Back to Claude’s draft') : null));
   }
+
+  if (!status.done) {
+    if (hasFix) {
+      const at = STEPS.indexOf(step);
+      body.append(el('div', { class: 'steps' }, ...STEPS.flatMap((type, i) => [
+        i ? el('span', {}, '›') : null,
+        el('span', { class: i < at ? 'ok' : i === at ? 'now' : '' }, `${i < at ? '✓' : i + 1 + '.'} ${ACTION[type].label}`),
+      ])));
+    }
+    const offered = (status.buttons || []).filter((type) => (type !== 'apply' || hasFix) && (type !== 'reply' || card.reply != null));
+    const button = (type) => {
+      const action = ACTION[type];
+      const isArmed = armed[card.id] === type;
+      const b = el('button', { class: isArmed || type === step ? 'primary' : action.quiet ? 'quiet' : '', onclick: () => sendEvent(card, type) }, isArmed ? action.confirm : action.label);
+      b.disabled = busy;
+      return b;
+    };
+    body.append(el('div', { class: 'actions' },
+      ...offered.filter((type) => !ACTION[type].quiet).map(button),
+      armed[card.id] ? el('button', { class: 'quiet', onclick: () => { delete armed[card.id]; render(); } }, 'Cancel') : null,
+      el('span', { class: 'spacer' }),
+      ...offered.filter((type) => ACTION[type].quiet).map(button)));
+    if (failed[card.id]) body.append(el('div', { class: 'error', role: 'alert' }, failed[card.id]));
+  }
+  node.append(body);
   return node;
 }
 
-function render(data) {
-  for (const card of data.cards || []) {
-    // A button press is answered once the agent changes the card's status.
-    if (pending[card.id] && pending[card.id].status !== card.status) delete pending[card.id];
-    if (DONE.has(card.status)) delete drafts[card.id];
+// Returns the card's node, and builds a new one only when something the card shows has changed.
+function view(card) {
+  const draft = drafts[card.id];
+  const key = JSON.stringify([card, pending[card.id]?.type, armed[card.id], failed[card.id], draft?.base, draft && draft.text !== card.reply]);
+  const old = views.get(card.id);
+  const typing = document.activeElement?.tagName === 'TEXTAREA' && old?.node.contains(document.activeElement);
+  if (old && (old.key === key || typing)) return old.node; // never rebuild under the user's cursor; blur renders again
+  const node = cardView(card);
+  if (known && !known.has(card.id)) node.classList.add('fresh');
+  views.set(card.id, { key, node });
+  return node;
+}
+
+function render() {
+  const cards = data.cards || [];
+  for (const card of cards) {
+    // A button press is answered once the agent changes anything on the card.
+    if (pending[card.id] && pending[card.id].snapshot !== JSON.stringify(card)) delete pending[card.id];
+    if (isDone(card)) delete drafts[card.id];
   }
+  const todo = cards.filter((c) => !isDone(c));
+  const done = cards.filter(isDone);
   const pr = data.pr || {};
-  document.getElementById('title').textContent = pr.title ? `#${pr.number} ${pr.title}` : 'PR companion';
-  document.title = pr.number ? `PR #${pr.number} · companion` : 'PR companion';
-  const meta = document.getElementById('meta');
-  meta.replaceChildren(
-    pr.url ? el('a', { href: pr.url, target: '_blank', rel: 'noopener' }, pr.repo || pr.url) : '',
-    pr.headSha ? ` · head ${pr.headSha.slice(0, 7)}` : '',
-    data.updatedAt ? ` · bijgewerkt ${new Date(data.updatedAt).toLocaleTimeString()}` : '',
+  const name = pr.number ? `#${pr.number} ${pr.title || ''}` : 'PR companion';
+  document.title = (todo.length ? `(${todo.length}) ` : '') + (pr.number ? `PR #${pr.number} · companion` : 'PR companion');
+  document.getElementById('title').replaceChildren(link(pr.url, name) || name);
+  const count = (verdict) => todo.filter((c) => c.verdict === verdict).length;
+  document.getElementById('meta').replaceChildren(
+    data.activity ? el('span', { class: 'activity' }, el('span', { class: 'spin' }), `Claude: ${data.activity}`) : '',
+    el('span', {}, el('b', {}, String(todo.length)), ' to do'),
+    ...Object.keys(VERDICT).filter(count).map((v) => el('span', { class: 'badge ' + v }, `${count(v)} ${VERDICT[v].toLowerCase()}`)),
+    el('span', {}, `${done.length} done`),
+    pr.repo ? el('span', {}, pr.repo + (pr.headSha ? ` @ ${pr.headSha.slice(0, 7)}` : '')) : '',
+    data.updatedAt ? el('span', {}, 'updated ' + new Date(data.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '',
   );
 
-  const cards = [...(data.cards || [])].sort((a, b) => DONE.has(a.status) - DONE.has(b.status));
+  const wanted = todo.map(view);
+  if (!todo.length) {
+    wanted.push(el('div', { class: 'empty' }, cards.length ? 'Everything is handled. New comments appear here by themselves.'
+      : 'No review comments yet. This page updates by itself when one arrives.'));
+  }
+  if (done.length) wanted.push(el('div', { class: 'section' }, `Done (${done.length})`), ...done.map(view));
   const main = document.getElementById('main');
-  const focused = document.activeElement?.tagName === 'TEXTAREA';
-  stale = focused;
-  if (focused) return; // never rebuild under the user's cursor; the next poll catches up
-  const count = (pred) => cards.filter(pred).length;
-  main.replaceChildren(
-    el('div', { class: 'counts' },
-      el('span', {}, `${count((c) => !DONE.has(c.status))} open`),
-      el('span', { class: 'holds' }, `${count((c) => c.verdict === 'holds')} terecht`),
-      el('span', { class: 'does-not-hold' }, `${count((c) => c.verdict === 'does-not-hold')} niet terecht`),
-      el('span', { class: 'unsure' }, `${count((c) => c.verdict === 'unsure')} twijfel`),
-    ),
-    ...(cards.length ? cards.map(cardView) : [el('div', { class: 'empty' }, 'Nog geen comments. De companion houdt de PR in de gaten.')]),
-  );
+  const keep = new Set(wanted);
+  for (const child of [...main.children]) if (!keep.has(child)) child.remove();
+  wanted.forEach((node, i) => { if (main.children[i] !== node) main.insertBefore(node, main.children[i] || null); });
+  known = new Set(cards.map((c) => c.id));
+
+  const fold = document.getElementById('fold');
+  const anyOpen = todo.some((c) => opened[c.id] ?? true);
+  fold.hidden = todo.length < 2;
+  fold.textContent = anyOpen ? 'Collapse all' : 'Expand all';
+  fold.onclick = () => { for (const c of todo) { opened[c.id] = !anyOpen; views.delete(c.id); } render(); };
+}
+
+function setConn(state, text) {
+  const conn = document.getElementById('conn');
+  conn.className = 'conn ' + state;
+  if (conn.textContent !== text) conn.textContent = text;
 }
 
 async function poll() {
   try {
     const res = await fetch('/data', { headers });
-    if (res.status === 403) { document.getElementById('meta').textContent = 'Geen toegang: open de link met het token uit de terminal.'; return; }
+    if (res.status === 403) return setConn('bad', 'No access: open the link with the token that Claude gave you.');
     const json = await res.text();
-    if (json !== lastJson || stale) { lastJson = json; render(JSON.parse(json)); }
+    if (json !== lastJson) {
+      try { data = JSON.parse(json); } catch { return; } // a half-written file: the next poll reads it again
+      lastJson = json;
+      render();
+    }
+    setConn('ok', 'Live');
   } catch {
-    document.getElementById('meta').textContent = 'Verbinding met de companion verbroken.';
+    setConn('bad', 'Not connected. Start the companion again from Claude; this page then continues by itself.');
   }
 }
 poll();
