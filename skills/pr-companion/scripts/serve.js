@@ -15,6 +15,7 @@ const { stateDirFor, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
 const EVENT_TYPES = new Set(['apply', 'commit', 'reply', 'dismiss', 'recheck']);
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 // The server for one pull request. stateDir holds companion.json; emit gets each line for the agent.
 function createApp({ stateDir, token, emit }) {
@@ -26,23 +27,25 @@ function createApp({ stateDir, token, emit }) {
       res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
       res.end(body);
     };
-    const url = new URL(req.url, 'http://127.0.0.1');
-    if (req.method === 'GET' && url.pathname === '/') return send(200, fs.readFileSync(PAGE), 'text/html; charset=utf-8');
+    // Another site can point its own name at 127.0.0.1 (DNS rebinding); its Host header gives it away.
+    if (!LOCAL_HOST.test(req.headers.host || '')) return send(403, 'forbidden');
+    const route = `${req.method} ${req.url.split('?')[0]}`;
+    if (route === 'GET /') return send(200, fs.readFileSync(PAGE), 'text/html; charset=utf-8');
     // Every other route needs the token. It travels in a custom header, so a cross-site
     // request from another page in the browser is blocked by the CORS preflight.
     if (req.headers['x-companion-token'] !== token) return send(403, 'forbidden');
 
-    if (req.method === 'GET' && url.pathname === '/data') {
+    if (route === 'GET /data') {
       return send(200, fs.existsSync(dataFile) ? fs.readFileSync(dataFile) : '{"cards":[]}', 'application/json');
     }
-    if (req.method !== 'POST' || url.pathname !== '/event') return send(404, 'not found');
+    if (route !== 'POST /event') return send(404, 'not found');
 
     let raw = '';
     req.on('data', (chunk) => { raw += chunk; if (raw.length > 100_000) req.destroy(); });
     req.on('end', () => {
       let event;
       try { event = JSON.parse(raw); } catch { return send(400, 'bad json'); }
-      if (!EVENT_TYPES.has(event.type) || typeof event.cardId !== 'string') return send(400, 'bad event');
+      if (!EVENT_TYPES.has(event?.type) || typeof event.cardId !== 'string') return send(400, 'bad event');
       const clean = { type: event.type, cardId: event.cardId, at: new Date().toISOString() };
       if (event.type === 'reply') clean.reply = String(event.reply ?? '');
       fs.appendFileSync(eventsFile, JSON.stringify(clean) + '\n');
