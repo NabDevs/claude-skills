@@ -55,7 +55,8 @@ async function findStack({ owner, name, pr }) {
 module.exports = { fromGitHub, fromBranches };
 
 if (require.main === module) {
-  const target = parseTarget(process.argv.slice(2));
+  // Only the repository and the number: the options of the watch scripts mean nothing here.
+  const target = parseTarget(process.argv.slice(2, 4));
   if (!target) {
     console.error('usage: stack.js <owner/repo> <pr-number>');
     process.exit(2);
