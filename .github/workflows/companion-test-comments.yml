@@ -20,16 +20,32 @@ jobs:
       PR: ${{ github.event.pull_request.number }}
       SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      # The first three steps are for the bottom pull request of the stack, the last two for the one above it.
       - name: Line comment in a review thread, about the interval
+        if: github.event.pull_request.base.ref == 'main'
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
             -f commit_id="$SHA" -f path=skills/pr-companion/scripts/watch.js -F line=33 -f side=RIGHT \
             -f body='A negative `--interval` passes this check, because `Number("-5")` is truthy. The loop then waits `-5000` ms, which is no wait at all, and polls GitHub without a pause. Can you refuse a value below 1?'
       - name: Line comment in a review thread, about reading the page
+        if: github.event.pull_request.base.ref == 'main'
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
             -f commit_id="$SHA" -f path=skills/pr-companion/scripts/serve.js -F line=67 -f side=RIGHT \
             -f body='This reads `page.html` from disk on every request. Read it once at the start and keep it in memory.'
       - name: Comment on the conversation, which the watcher must skip for a bot
+        if: github.event.pull_request.base.ref == 'main'
         run: |
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body 'Test report: 17 tests passed.'
+      - name: Line comment on the upper pull request, about code that the lower one owns
+        if: github.event.pull_request.base.ref != 'main'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
+            -f commit_id="$SHA" -f path=skills/pr-companion/scripts/stack.js -F line=58 -f side=RIGHT \
+            -f body='`stack.js` takes its arguments through `parseTarget`, so it also accepts `--interval` and `--once`, which it never uses. What does `node stack.js owner/repo 12 --interval 0` do here, now and after the interval check that is asked for on the pull request below?'
+      - name: Line comment on the upper pull request, about a repeat of code from the lower one
+        if: github.event.pull_request.base.ref != 'main'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
+            -f commit_id="$SHA" -f path=skills/pr-companion/scripts/stack.js -F line=64 -f side=RIGHT \
+            -f body='These lines repeat what `cli()` in `watch.js` does for the other two scripts: the usage on wrong arguments, and one `ERROR` line with exit code 1. Can `stack.js` use `cli()` too?'
