@@ -189,6 +189,6 @@ function cli(script, main) {
   });
 }
 
-module.exports = { parseTarget, stateDirFor, isWakeWorthy, changes, readJson, watch, cli };
+module.exports = { parseTarget, stateDirFor, gh, isWakeWorthy, changes, readJson, watch, cli };
 
 if (require.main === module) cli('watch.js', (target) => watch(target, console.log));
