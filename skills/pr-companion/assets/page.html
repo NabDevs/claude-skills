@@ -50,6 +50,9 @@
   details[open] > summary::before { content: "▾"; }
   .fold > summary { padding: 6px 0; font-size: 13px; color: var(--muted); }
   .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; font-weight: 600; white-space: nowrap; }
+  .badge.here { background: var(--text); color: var(--card); border-color: var(--text); }
+  button.badge { background: none; cursor: pointer; color: var(--muted); }
+  #stack { margin-top: 6px; }
   .badge.holds { color: var(--holds); } .badge.does-not-hold { color: var(--nothold); } .badge.unsure { color: var(--unsure); }
   .where { font: 13px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; min-width: 0; }
   .author { font-size: 13px; color: var(--muted); }
@@ -104,6 +107,7 @@
     <span class="conn" id="conn" role="status">Loading…</span>
   </div>
   <div class="meta" id="meta"></div>
+  <div class="meta" id="stack" hidden></div>
 </div></header>
 <main class="wrap" id="main"></main>
 <script>
@@ -148,6 +152,7 @@ const ACTION = {
   dismiss: { label: 'Dismiss', busy: 'Dismissing…', quiet: true },
 };
 const STEPS = ['apply', 'commit', 'reply'];
+const PR_BUSY = { 'request-review': 'Asking for a review…', 'sync-stack': 'Rebasing the stack…' };
 // What a reviewer did last. `again` marks the ones a new review can be asked from.
 const REVIEW = {
   'changes-requested': { label: 'changes requested', tone: 'does-not-hold', again: true },
@@ -157,6 +162,7 @@ const REVIEW = {
 };
 const statusOf = (card) => STATUS[card.status] || { label: card.status || '', buttons: ['recheck', 'dismiss'] };
 const isDone = (card) => Boolean(statusOf(card).done);
+const inStack = (other) => other.repo === data.pr?.repo && (data.pr?.stack || []).some((entry) => entry.number === other.number);
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -223,13 +229,13 @@ async function sendEvent(card, type) {
   }
 }
 
-// Asks the reviewers for a new review, after a second click: it notifies them on GitHub.
-async function requestReview(reviewers) {
-  if (!armed[PR]) { armed[PR] = true; return render(); }
+// A press on a button of the pull request panel. It needs a second click, because it reaches other people on GitHub.
+async function pressPr(type, extra) {
+  if (armed[PR] !== type) { armed[PR] = type; return render(); }
   delete armed[PR];
-  pending[PR] = { snapshot: JSON.stringify(data.pr) };
+  pending[PR] = { type, snapshot: JSON.stringify(data.pr) };
   render();
-  const { problem } = await post({ type: 'request-review', pr: data.pr, reviewers });
+  const { problem } = await post({ type, pr: data.pr, ...extra });
   failed[PR] = problem;
   if (problem) {
     delete pending[PR];
@@ -238,15 +244,15 @@ async function requestReview(reviewers) {
   }
 }
 
-// Asks Claude to start a companion for one more pull request.
-async function watchPr() {
-  const target = (asking.watch || '').trim();
+// Asks Claude to start a companion for one more pull request: the one in the field, or the one given.
+async function watchPr(given) {
+  const target = given || (asking.watch || '').trim();
   if (!target) return;
   const { at, problem } = await post({ type: 'watch', target });
   failed.watch = problem?.includes('400') ? 'That is not a pull request. Use owner/repo#123 or its link on GitHub.' : problem;
   if (at) {
     watching = { target, count: others.length };
-    delete asking.watch;
+    if (!given) delete asking.watch;
   }
   document.activeElement?.blur();
   render();
@@ -297,19 +303,30 @@ function prView() {
     body.append(el('div', { class: 'hint' }, 'Ticket: ', link(ticket.url, ticket.key) || ticket.key, ticket.title ? ` ${ticket.title}` : ''));
   }
   if (pr.body) body.append(el('details', { class: 'fold' }, el('summary', {}, 'Description on GitHub'), rich(pr.body)));
+  const wait = pending[PR];
+  // One row of the panel with a button that needs a second click: badges left, the button right, a note below.
+  const pressRow = (title, badges, type, label, confirm, extra, note) => {
+    const press = el('button', { class: armed[PR] === type ? 'primary' : '', onclick: () => pressPr(type, extra) }, armed[PR] === type ? confirm : label);
+    press.disabled = Boolean(wait);
+    body.append(el('h3', {}, title), el('div', { class: 'actions' }, ...badges, el('span', { class: 'spacer' }),
+      wait?.type === type ? el('span', { class: 'status' }, el('span', { class: 'spin' }), PR_BUSY[type]) : null,
+      label ? press : null,
+      armed[PR] === type ? el('button', { class: 'quiet', onclick: () => { delete armed[PR]; render(); } }, 'Cancel') : null));
+    if (note) body.append(el('div', { class: 'hint' }, note));
+  };
   if (pr.reviewers?.length) {
     const again = pr.reviewers.filter((r) => REVIEW[r.state]?.again).map((r) => r.login);
-    const ask = el('button', { class: armed[PR] ? 'primary' : '', onclick: () => requestReview(again) }, armed[PR] ? `Confirm: ask ${again.join(', ')}` : 'Request review again');
-    ask.disabled = Boolean(pending[PR]);
-    body.append(el('h3', {}, 'Reviewers'), el('div', { class: 'actions' },
-      ...pr.reviewers.map((r) => el('span', { class: 'badge ' + (REVIEW[r.state]?.tone ?? '') }, `${r.login}: ${REVIEW[r.state]?.label ?? r.state}`)),
-      el('span', { class: 'spacer' }),
-      pending[PR] ? el('span', { class: 'status' }, el('span', { class: 'spin' }), 'Asking for a review…') : null,
-      again.length ? ask : null,
-      armed[PR] ? el('button', { class: 'quiet', onclick: () => { delete armed[PR]; render(); } }, 'Cancel') : null));
-    if (pr.reviewNote) body.append(el('div', { class: 'hint' }, pr.reviewNote));
-    if (failed[PR]) body.append(el('div', { class: 'error', role: 'alert' }, failed[PR]));
+    const badges = pr.reviewers.map((r) => el('span', { class: 'badge ' + (REVIEW[r.state]?.tone ?? '') }, `${r.login}: ${REVIEW[r.state]?.label ?? r.state}`));
+    pressRow('Reviewers', badges, 'request-review', again.length && 'Request review again', `Confirm: ask ${again.join(', ')}`, { reviewers: again }, pr.reviewNote);
   }
+  if (pr.stack?.length > 1) {
+    // After a commit low in the stack, the pull requests above it still stand on the old commit.
+    const behind = pr.stackBehind || [];
+    const names = behind.map((number) => `#${number}`).join(', ');
+    pressRow('Stack', [el('span', {}, `Pull request ${pr.stack.findIndex((entry) => entry.number === pr.number) + 1} of ${pr.stack.length}, from the bottom.`)],
+      'sync-stack', behind.length && 'Rebase the pull requests above', `Confirm: rebase and force-push ${names}`, { prs: behind }, pr.stackNote);
+  }
+  if (failed[PR]) body.append(el('div', { class: 'error', role: 'alert' }, failed[PR]));
   body.append(el('h3', {}, 'Ask Claude'), askView(PR, data.questions));
 
   body.append(el('h3', {}, 'Other pull requests'));
@@ -321,7 +338,7 @@ function prView() {
   field.addEventListener('input', () => { asking.watch = field.value; });
   field.addEventListener('blur', () => render());
   field.addEventListener('keydown', (event) => { if (event.key === 'Enter') watchPr(); });
-  body.append(el('div', { class: 'askrow' }, field, el('button', { onclick: watchPr }, 'Watch')));
+  body.append(el('div', { class: 'askrow' }, field, el('button', { onclick: () => watchPr() }, 'Watch')));
   if (watching) body.append(el('div', { class: 'hint waiting' }, el('span', { class: 'spin' }), `Claude starts a companion for ${watching.target}. It shows here when it runs.`));
   if (failed.watch) body.append(el('div', { class: 'error', role: 'alert' }, failed.watch));
   node.append(body);
@@ -354,8 +371,11 @@ function cardView(card) {
     body.append(el('div', { class: 'quote reply' }, el('div', { class: 'who' }, el('b', {}, r.author || 'unknown')), rich(r.body || '')));
   }
   if (card.take) body.append(el('h3', {}, 'Claude’s verdict'), rich(card.take));
+  if (card.stack) body.append(el('h3', {}, 'Across the stack'), rich(card.stack));
   if (card.changes) body.append(el('h3', {}, 'Applied change'), diffView(card.changes));
   else if (hasFix) body.append(el('h3', {}, 'Proposed fix (not applied yet)'), diffView(card.proposal.diff));
+  const lower = card.proposal?.branch && card.proposal.branch !== data.pr?.branch;
+  if (lower) body.append(el('div', { class: 'hint' }, 'This fix goes into ', el('code', {}, card.proposal.branch), ', a lower pull request of the stack. The pull requests above it need a rebase after the commit.'));
   if (card.statusNote) {
     const tone = status.attention ? ' bad' : ['applied', 'committed', 'replied'].includes(card.status) ? ' good' : '';
     body.append(el('h3', {}, 'Result'), el('div', { class: 'note' + tone }, link(card.statusNote, card.statusNote) || rich(card.statusNote)));
@@ -452,8 +472,20 @@ function render() {
     el('span', {}, `${done.length} done`),
     pr.repo ? el('span', {}, pr.repo + (pr.headSha ? ` @ ${pr.headSha.slice(0, 7)}` : '')) : '',
     data.updatedAt ? el('span', {}, 'updated ' + new Date(data.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '',
-    ...others.map((other) => el('a', { class: 'badge', href: other.url, title: other.title }, `${other.repo}#${other.number} · ${other.todo} to do`)),
+    ...others.filter((other) => !inStack(other)).map((other) => el('a', { class: 'badge', href: other.url, title: other.title }, `${other.repo}#${other.number} · ${other.todo} to do`)),
   );
+  // The stack, from the bottom to the top: this page, a link to a page that runs, or a button that starts one.
+  const stack = pr.stack?.length > 1 ? pr.stack : [];
+  const strip = document.getElementById('stack');
+  strip.hidden = !stack.length;
+  strip.replaceChildren(el('b', {}, 'Stack'), ...stack.flatMap((entry, i) => {
+    const other = others.find((o) => o.repo === pr.repo && o.number === entry.number);
+    const chip = entry.number === pr.number ? el('span', { class: 'badge here', title: entry.title }, `#${entry.number} this page · ${todo.length} to do`)
+      : other ? el('a', { class: 'badge', href: other.url, title: entry.title }, `#${entry.number} · ${other.todo} to do`)
+      : entry.state !== 'open' ? el('span', { class: 'badge', title: entry.title }, `#${entry.number} ${entry.state}`)
+      : el('button', { class: 'badge', title: entry.title, onclick: () => watchPr(`${pr.repo}#${entry.number}`) }, `#${entry.number} not watched · watch`);
+    return i ? [el('span', {}, '›'), chip] : [chip];
+  }));
 
   const wanted = [keep(PR, [data.pr, data.questions, asked[PR], failed['ask:' + PR], failed[PR], armed[PR], Boolean(pending[PR]), others, watching, failed.watch], prView), ...todo.map(view)];
   if (!todo.length) {

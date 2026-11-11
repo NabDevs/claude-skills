@@ -93,6 +93,13 @@ function createApp({ stateDir, token, pr, emit }) {
         const [, repo, number] = String(event.target ?? '').trim().match(PULL_REQUEST) ?? [];
         if (!repo) return send(400, 'bad pull request');
         clean.target = `${repo}#${number}`;
+      } else if (clean.type === 'sync-stack') {
+        // The pull requests to rebase are ones of this stack, and the page showed the pull request as it is.
+        const known = new Set((data.pr?.stack ?? []).map((entry) => entry.number));
+        const numbers = Array.isArray(event.prs) ? event.prs : [];
+        if (!numbers.length || !numbers.every((number) => known.has(number))) return send(400, 'bad pull requests');
+        if (JSON.stringify(data.pr) !== JSON.stringify(event.pr)) return send(409, 'pull request changed');
+        clean.prs = numbers;
       } else if (clean.type === 'request-review') {
         // A new review can be asked from the reviewers on the page, and only while the page shows the pull request as it is.
         const known = new Set((data.pr?.reviewers ?? []).map((reviewer) => reviewer.login));

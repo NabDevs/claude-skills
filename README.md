@@ -32,6 +32,7 @@ These come from the user and define what the skill must do.
 10. The top of the page says what the pull request is about: a short summary, the ticket and the description. (Added on 2026-11-11.)
 11. The page shows what each reviewer did last, and a button asks them for a new review. (Added on 2026-11-11.)
 12. More than one pull request can be watched at the same time. The page links to the others and can start one more. (Added on 2026-11-11.)
+13. A stack of pull requests is reviewed as a whole. The page shows the stack, and a verdict on one pull request takes the code and the comments of the others into account. (Added on 2026-11-11.)
 
 ### Design choices
 
@@ -53,6 +54,9 @@ These come from the user and define what the skill must do.
 - A comment on the PR conversation and a review summary are outside `pr-feedback-walk`, which covers review threads. The agent judges them the same way and replies with `gh pr comment`.
 - A question on the page is an `ask` event. The agent answers in `companion.json`, and the page shows "Waiting for Claude…" until an entry with the time of that event is there. A question can make the agent rewrite the proposed fix or the draft reply, because those stay on the page. It is never a go-ahead for the code, the branch or GitHub: those keep their buttons. The idea comes from `guided-pr-review`.
 - More than one pull request: each keeps its own process, state folder and page, so nothing about one pull request changed. A page asks its server for the other companions that answer on this computer (`server.json` in the other state folders) and shows them as links with their number of open cards. A field on the page sends a `watch` event, and the agent starts one more companion. A fix can be applied only where the head branch of that pull request is checked out, so a second pull request of the same repository needs a git worktree for its fixes; watching, judging and replying need no checkout.
+- A stack: `scripts/stack.js` reads the stack that GitHub keeps for the pull request, and works it out from the branches when GitHub has none (each base branch is the head branch of the one below). The two ways come from `guided-pr-review`. Every open pull request of the stack gets its own companion, and every page shows the whole stack in its header, from the bottom to the top, with a link or a button to start the page that is missing.
+- The agent judges a stack as one change that is cut into parts. It reads the diff and the comments of every pull request first. A fix goes into the pull request that adds or changes the line, also when the comment is on a higher one; a fix low in the stack must hold for the pull requests above it; comments in different pull requests about the same code get one fix. Each card says what the other pull requests do with its code.
+- After a commit low in the stack, the pull requests above it still stand on the old commit. The page then offers "Rebase the pull requests above", with a second click, because it pushes with force. A fix for a branch that is checked out nowhere is applied in a git worktree in the state folder, so the user's own checkout stays as it is.
 - State per pull request lives in `~/.local/state/pr-companion/<owner>/<repo>/<pr>/` (or under `$XDG_STATE_HOME`): `watch-state.json`, `companion.json`, `server.json`. Button presses are not kept in a file.
 
 ### Known limits
@@ -63,10 +67,11 @@ These come from the user and define what the skill must do.
 
 ### Test status (2026-11-11)
 
-Unit tests, `node --test skills/pr-companion/scripts/` (17 tests, all pass):
+Unit tests, `node --test skills/pr-companion/scripts/` (23 tests, all pass):
 
 - `watch.test.js`: the argument parsing, `isWakeWorthy`, and the lines for a first start, a later start with and without cards, a new comment, a new review with its state, a resolved thread, a new head and a closed pull request.
-- `serve.test.js`: the token, the host name, requests that cannot be read (`//`, a body of `null`), the `EVENT` line of a button press, a question, a request for review and a pull request to watch, the 409 for a card or a pull request that changed, and the list of other companions.
+- `serve.test.js`: the token, the host name, requests that cannot be read (`//`, a body of `null`), the `EVENT` line of a button press, a question, a request for review, a rebase of the stack and a pull request to watch, the 409 for a card or a pull request that changed, and the list of other companions.
+- `stack.test.js`: a chain of branches from any of its pull requests, a pull request alone, a fork, a split, and the stack that GitHub keeps.
 
 Read-only against `myparcelnl/sdk#711`:
 
@@ -75,7 +80,7 @@ Read-only against `myparcelnl/sdk#711`:
 - The URL is the same after a restart; a second companion for the same pull request is refused; a port taken by another program falls back to a free one.
 - The server keeps running after `GET //`, and no process is left after it stops.
 
-The page, in headless Chrome with synthetic data for two pull requests (53 checks, all pass). The script that drives Chrome is not in this repository:
+The page, in headless Chrome with synthetic data for a stack of three pull requests, two of them with a page (62 checks, all pass). The script that drives Chrome is not in this repository:
 
 - Light, dark and a 400 pixel window; no sideways scroll.
 - Every button of every status; the second click for a reply; a failed send; a press on a card that changed; the buttons come back after "Judge again".
@@ -84,9 +89,11 @@ The page, in headless Chrome with synthetic data for two pull requests (53 check
 - The panel about the pull request: summary, ticket, folded description, and the code hunk on a card.
 - "Request review again": the reviewers it names, the second click, the busy state and the new states.
 - The link to the other pull request, its page, and the field that asks for one more.
+- The stack in the header, the button that starts a missing page, the note on a card about the other pull requests, the fix for a lower branch, and the rebase with its second click.
 
 Not tested yet:
 
 - The page in Safari and Firefox.
 - The full cycle with a real agent and real buttons: apply, tests, commit, push, reply, undo, a request for review, a second pull request. No button has changed code or GitHub yet.
-- `SKILL.md` as an agent follows it: the tables are checked against the page and the scripts by reading only.
+- `SKILL.md` as an agent follows it: the tables are checked against the page and the scripts by reading only. One real start on `NabDevs/claude-skills#1` gave two cards for two comments by a bot and no card for the bot's conversation comment.
+- A stack with a real agent: the verdicts across pull requests, a fix in a lower branch, a worktree and the rebase. `stack.js` read no stack that GitHub keeps yet, so the shape of that answer is taken from `guided-pr-review`.

@@ -130,6 +130,18 @@ test('the page gets the companions that run for other pull requests', async () =
   other.closeAllConnections();
 });
 
+test('a rebase of the stack names pull requests of this stack, as the page showed it', async () => {
+  lines.length = 0;
+  const pr = { number: 11, stack: [{ number: 11 }, { number: 12 }, { number: 13 }], stackBehind: [12, 13] };
+  fs.writeFileSync(path.join(stateDir, 'companion.json'), JSON.stringify({ pr, cards: [] }));
+  assert.equal((await post({ type: 'sync-stack', pr, prs: [12, 13] })).status, 200);
+  assert.deepEqual(JSON.parse(lines[0].slice('EVENT '.length)).prs, [12, 13]);
+  assert.equal((await post({ type: 'sync-stack', pr, prs: [99] })).status, 400);
+  assert.equal((await post({ type: 'sync-stack', pr, prs: [] })).status, 400);
+  assert.equal((await post({ type: 'sync-stack', pr: { ...pr, stackBehind: [] }, prs: [12] })).status, 409);
+  assert.equal(lines.length, 1);
+});
+
 test('a press on a card that changed since the page showed it is refused', async () => {
   lines.length = 0;
   writeCards([{ ...CARD, proposal: { diff: '-a\n+c' } }]);
