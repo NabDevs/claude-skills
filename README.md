@@ -29,6 +29,7 @@ These come from the user and define what the skill must do.
 7. Never resolve a review thread. The reviewer resolves it.
 8. Only for the user's own pull request. For somebody else's pull request, `guided-pr-review` applies.
 9. The user can ask the agent a question on the page, about one comment or about the whole pull request, and reads the answer there. (Added on 2026-11-10.)
+10. The top of the page says what the pull request is about: a short summary, the ticket and the description. (Added on 2026-11-11.)
 
 ### Design choices
 
@@ -45,6 +46,7 @@ These come from the user and define what the skill must do.
 - A button press shows as busy until the agent changes the card. `page.html` has one table of statuses and one of buttons; a status that the table does not know still gets "Judge again" and "Dismiss".
 - A button press is the approval that `pr-feedback-walk` step 6 asks for before a commit, because the page shows the real `git diff` before the commit button appears. To make that true, the page sends the card as it showed it with every press, and the server answers 409 when `companion.json` holds another version of that card. The user then sees the new version and presses again.
 - A fix that is applied but not committed is in the working tree. Such a card offers only "Commit & push" and "Undo fix", so no card is closed with its change still there. Before a commit the agent compares the working tree with the diff on the card, and shows the new diff when they differ.
+- The agent reads the PR description and the tickets it names once, at the start. They are on the page as context, and they are the measure for a comment that asks for more than the PR set out to do: "outside this ticket" needs the ticket as its reason. `guided-pr-review` gives its reviewer the same scope.
 - A comment on the PR conversation and a review summary are outside `pr-feedback-walk`, which covers review threads. The agent judges them the same way and replies with `gh pr comment`.
 - A question on the page is an `ask` event. The agent answers in `companion.json`, and the page shows "Waiting for Claude…" until an entry with the time of that event is there. A question can make the agent rewrite the proposed fix or the draft reply, because those stay on the page. It is never a go-ahead for the code, the branch or GitHub: those keep their buttons. The idea comes from `guided-pr-review`.
 - State per pull request lives in `~/.local/state/pr-companion/<owner>/<repo>/<pr>/` (or under `$XDG_STATE_HOME`): `watch-state.json`, `companion.json`, `server.json`. Button presses are not kept in a file.

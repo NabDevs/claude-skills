@@ -47,7 +47,8 @@
   summary { display: flex; gap: 6px 10px; flex-wrap: wrap; align-items: center; padding: 10px 14px; cursor: pointer; list-style: none; border-radius: 10px; }
   summary::-webkit-details-marker { display: none; }
   summary::before { content: "▸"; color: var(--muted); width: 12px; font-size: 16px; line-height: 1; }
-  .card[open] > summary::before { content: "▾"; }
+  details[open] > summary::before { content: "▾"; }
+  .fold > summary { padding: 6px 0; font-size: 13px; color: var(--muted); }
   .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; font-weight: 600; white-space: nowrap; }
   .badge.holds { color: var(--holds); } .badge.does-not-hold { color: var(--nothold); } .badge.unsure { color: var(--unsure); }
   .where { font: 13px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; min-width: 0; }
@@ -181,6 +182,18 @@ function diffView(text, last = Infinity) {
   return pre;
 }
 
+// Sends one event to the companion. Resolves { at } as the server named it, or { problem } when it was not sent.
+async function post(body) {
+  try {
+    const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 409) return { problem: 'This changed after the page showed it. Look at it again, then press once more.' };
+    if (!res.ok) return { problem: `Not sent (error ${res.status}).` };
+    return await res.json();
+  } catch {
+    return { problem: 'Not sent: the companion does not answer.' };
+  }
+}
+
 async function sendEvent(card, type) {
   if (ACTION[type].confirm && armed[card.id] !== type) { armed[card.id] = type; return render(); }
   delete armed[card.id];
@@ -190,14 +203,7 @@ async function sendEvent(card, type) {
   pending[card.id] = { type, snapshot: JSON.stringify(card) };
   document.activeElement?.blur();
   render();
-  let problem = '';
-  try {
-    const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.status === 409) problem = 'This card changed after the page showed it. Look at it again, then press once more.';
-    else if (!res.ok) problem = `Not sent (error ${res.status}).`;
-  } catch {
-    problem = 'Not sent: the companion does not answer.';
-  }
+  const { problem } = await post(body);
   if (problem) {
     delete pending[card.id];
     failed[card.id] = problem;
@@ -209,14 +215,11 @@ async function sendEvent(card, type) {
 async function ask(id) {
   const question = (asking[id] || '').trim();
   if (!question) return;
-  delete failed['ask:' + id];
-  try {
-    const res = await fetch('/event', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'ask', cardId: id === PR ? null : id, question }) });
-    if (!res.ok) throw new Error(res.status);
-    (asked[id] ||= []).push({ at: (await res.json()).at, question });
+  const { at, problem } = await post({ type: 'ask', cardId: id === PR ? null : id, question });
+  failed['ask:' + id] = problem;
+  if (at) {
+    (asked[id] ||= []).push({ at, question });
     delete asking[id];
-  } catch {
-    failed['ask:' + id] = 'Question not sent: the companion does not answer.';
   }
   document.activeElement?.blur();
   render();
@@ -241,15 +244,21 @@ function askView(id, answered = []) {
   return box;
 }
 
-// The panel for questions about the whole pull request. It opens by itself once it holds a question.
-function prAskView() {
-  const questions = data.questions || [];
-  const total = questions.length + (asked[PR] || []).length;
+// The panel about the whole pull request: what it does, its ticket, its description and the questions about it.
+function prView() {
+  const pr = data.pr || {};
   const node = el('details', { class: 'card pr' });
-  node.open = opened[PR] ?? total > 0;
+  node.open = opened[PR] ?? true;
   node.append(el('summary', { onclick: () => { opened[PR] = !node.open; } },
-    el('b', {}, 'Ask Claude about this pull request'), total ? el('span', { class: 'author' }, `${total} asked`) : null));
-  node.append(el('div', { class: 'body' }, askView(PR, questions)));
+    el('b', {}, 'About this pull request'), pr.branch ? el('span', { class: 'where' }, `${pr.branch} → ${pr.base || '?'}`) : null));
+  const body = el('div', { class: 'body' });
+  if (pr.summary) body.append(el('div', { class: 'answer' }, el('span', { class: 'ai' }, 'Summary by Claude'), rich(pr.summary)));
+  for (const ticket of pr.tickets || []) {
+    body.append(el('div', { class: 'hint' }, 'Ticket: ', link(ticket.url, ticket.key) || ticket.key, ticket.title ? ` ${ticket.title}` : ''));
+  }
+  if (pr.body) body.append(el('details', { class: 'fold' }, el('summary', {}, 'Description on GitHub'), rich(pr.body)));
+  body.append(el('h3', {}, 'Ask Claude'), askView(PR, data.questions));
+  node.append(body);
   return node;
 }
 
@@ -377,7 +386,7 @@ function render() {
     data.updatedAt ? el('span', {}, 'updated ' + new Date(data.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '',
   );
 
-  const wanted = [keep(PR, [data.questions, asked[PR], failed['ask:' + PR]], prAskView), ...todo.map(view)];
+  const wanted = [keep(PR, [data.pr, data.questions, asked[PR], failed['ask:' + PR]], prView), ...todo.map(view)];
   if (!todo.length) {
     wanted.push(el('div', { class: 'empty' }, cards.length ? 'Everything is handled. New comments appear here by themselves.'
       : 'No review comments yet. This page updates by itself when one arrives.'));

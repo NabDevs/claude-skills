@@ -33,7 +33,7 @@ Run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as 
 - Another `ERROR` in place of `READY`: the process has stopped. Tell the user the reason and stop.
 - The process stops later without `CLOSED`, for example at a time limit of the harness: start it again in silence. The URL stays the same and the page connects again.
 
-After `READY`, write the `pr` block to `companion.json` in `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (under `$XDG_STATE_HOME` when that is set). A file from an earlier session keeps its cards; give a card that was left in `applying` or `committing` the status that the working tree and `git log` show.
+After `READY`, read the PR description and the tickets it names (a key in the title, the branch or the description), each once. They say what this PR must do and what it leaves out. Write the `pr` block to `companion.json` in `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (under `$XDG_STATE_HOME` when that is set), with a `summary` of two or three sentences: what the PR changes and why. A file from an earlier session keeps its cards; give a card that was left in `applying` or `committing` the status that the working tree and `git log` show.
 
 Done when `companion.json` has the `pr` block and the user has the whole URL, with the token after `#`, in one line.
 
@@ -53,7 +53,7 @@ Handle every line in the order it arrives. A line is done when `companion.json` 
 #### Judging a thread
 
 1. Read the whole thread, with the `diffHunk` of its first comment.
-2. Do `pr-feedback-walk` walk steps 1 to 4: the comment verbatim, threads on the same problem in one card, the claim checked against the code with `file:line`, then a fix or a pushback.
+2. Do `pr-feedback-walk` walk steps 1 to 4: the comment verbatim, threads on the same problem in one card, the claim checked against the code with `file:line`, then a fix or a pushback. Measure a comment that asks for more than the PR set out to do against the ticket: "outside this ticket" is a pushback when the ticket says so, and the `take` names the ticket.
 3. Write the fix as a unified diff in `proposal.diff`. The working tree stays as it is until `apply`. A pushback has no `proposal`.
 4. Draft the reply with `writing-style`.
 5. Write the card with status `new`. A card with its fix in the working tree (`applied`, `tests-failed`) keeps its status and its `changes`.
@@ -82,7 +82,13 @@ Handle lines in silence: the page shows the result. Write in the chat only for `
 
 ```json
 {
-  "pr": { "repo": "owner/name", "number": 123, "title": "…", "url": "…", "headSha": "…" },
+  "pr": {
+    "repo": "owner/name", "number": 123, "title": "…", "url": "…", "headSha": "…",
+    "branch": "<head branch>", "base": "<base branch>",
+    "summary": "<two or three sentences: what the PR changes and why>",
+    "body": "<the PR description, verbatim>",
+    "tickets": [{ "key": "INT-123", "title": "…", "url": "<https link>" }]
+  },
   "updatedAt": "<ISO time>",
   "activity": "<what you do now; absent when idle>",
   "questions": [{ "at": "<at of the ask event>", "question": "<verbatim>", "answer": "<markdown>" }],
