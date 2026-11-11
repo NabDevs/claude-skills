@@ -8,11 +8,14 @@ const { createApp } = require('./serve.js');
 
 const TOKEN = 'test-token';
 const lines = [];
-let server, base, stateDir;
+let server, base, root, stateDir;
 
 before(async () => {
-  stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-companion-'));
-  server = createApp({ stateDir, token: TOKEN, emit: (line) => lines.push(line) });
+  // The state folder has the layout of the real one: <root>/<owner>/<repo>/<number>.
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-companion-'));
+  stateDir = path.join(root, 'owner', 'repo', '1');
+  fs.mkdirSync(stateDir, { recursive: true });
+  server = createApp({ stateDir, token: TOKEN, pr: 'owner/repo#1', emit: (line) => lines.push(line) });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -20,7 +23,7 @@ before(async () => {
 after(() => {
   server.close();
   server.closeAllConnections();
-  fs.rmSync(stateDir, { recursive: true });
+  fs.rmSync(root, { recursive: true });
 });
 
 const get = (route, headers = { 'X-Companion-Token': TOKEN }) => fetch(base + route, { headers });
@@ -65,7 +68,8 @@ test('a button press reaches the agent as one EVENT line with only the known fie
   assert.match(lines[0], /^EVENT \{/);
   assert.equal(lines[0].includes('\n'), false);
   const event = JSON.parse(lines[0].slice('EVENT '.length));
-  assert.deepEqual(Object.keys(event), ['type', 'cardId', 'at', 'reply']);
+  assert.deepEqual(Object.keys(event), ['type', 'pr', 'cardId', 'at', 'reply']);
+  assert.equal(event.pr, 'owner/repo#1');
   assert.equal(event.reply, 'Fixed.\nThanks');
 });
 
@@ -75,8 +79,8 @@ test('a question reaches the agent with its time, for a card or for the whole pu
   const { at } = await res.json();
   assert.equal((await post({ type: 'ask', question: 'What is left?' })).status, 200);
   assert.deepEqual(lines.map((line) => JSON.parse(line.slice('EVENT '.length))).map(({ at: _, ...rest }) => rest), [
-    { type: 'ask', cardId: 'c1', question: 'Why not a map?' },
-    { type: 'ask', cardId: null, question: 'What is left?' },
+    { type: 'ask', pr: 'owner/repo#1', cardId: 'c1', question: 'Why not a map?' },
+    { type: 'ask', pr: 'owner/repo#1', cardId: null, question: 'What is left?' },
   ]);
   assert.equal(JSON.parse(lines[0].slice('EVENT '.length)).at, at);
   for (const body of [{ type: 'ask' }, { type: 'ask', question: '   ' }, { type: 'ask', question: 7 }, { type: 'ask', cardId: 3, question: 'x' }, { type: 'ask', question: 'x'.repeat(4001) }]) {
@@ -94,6 +98,36 @@ test('a request for review names reviewers of this pull request, as the page sho
   assert.equal((await post({ type: 'request-review', pr, reviewers: [] })).status, 400);
   assert.equal((await post({ type: 'request-review', pr: { ...pr, number: 2 }, reviewers: ['anna'] })).status, 409);
   assert.equal(lines.length, 1);
+});
+
+test('a pull request to watch is read from its short form or its link', async () => {
+  lines.length = 0;
+  for (const target of ['owner/other#12', ' https://github.com/owner/other/pull/12 ', 'https://github.com/owner/other/pull/12/']) {
+    assert.equal((await post({ type: 'watch', target })).status, 200, target);
+  }
+  assert.deepEqual(lines.map((line) => JSON.parse(line.slice('EVENT '.length)).target), ['owner/other#12', 'owner/other#12', 'owner/other#12']);
+  for (const target of ['', 'owner/other', '#12', 'https://example.com/owner/other/pull/12', 12]) {
+    assert.equal((await post({ type: 'watch', target })).status, 400, String(target));
+  }
+});
+
+test('the page gets the companions that run for other pull requests', async () => {
+  const otherDir = path.join(root, 'owner', 'other', '12');
+  fs.mkdirSync(otherDir, { recursive: true });
+  const other = createApp({ stateDir: otherDir, token: 'other-token', pr: 'owner/other#12', emit: () => {} });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const port = other.address().port;
+  fs.writeFileSync(path.join(otherDir, 'server.json'), JSON.stringify({ port, token: 'other-token' }));
+  fs.writeFileSync(path.join(otherDir, 'companion.json'), JSON.stringify({ pr: { title: 'Other' }, cards: [{ status: 'new' }, { status: 'replied' }, { status: 'applied' }] }));
+  // A companion that stopped keeps its server.json; it is left out.
+  const stoppedDir = path.join(root, 'owner', 'stopped', '3');
+  fs.mkdirSync(stoppedDir, { recursive: true });
+  fs.writeFileSync(path.join(stoppedDir, 'server.json'), JSON.stringify({ port: 1, token: 'x' }));
+
+  assert.equal((await get('/prs', {})).status, 403);
+  assert.deepEqual(await (await get('/prs')).json(), [{ repo: 'owner/other', number: 12, title: 'Other', todo: 2, url: `http://127.0.0.1:${port}/#other-token` }]);
+  other.close();
+  other.closeAllConnections();
 });
 
 test('a press on a card that changed since the page showed it is refused', async () => {

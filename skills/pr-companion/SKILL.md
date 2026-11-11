@@ -21,9 +21,9 @@ Load these with the Skill tool before step 2. Their rules apply in full; this sk
 
 ### 1. Find the PR
 
-Find it as `pr-feedback-walk` "Finding the pull request" says; a number from the user wins. The PR must be the user's own, with its branch checked out here. For a PR by somebody else, point to `guided-pr-review` and stop. For another branch, ask the user to check it out.
+Find it as `pr-feedback-walk` "Finding the pull request" says; a number from the user wins. The PR must be the user's own: for a PR by somebody else, point to `guided-pr-review` and stop. Find where its head branch is checked out: this folder, a git worktree, or nowhere. Watching, judging and replying need no checkout; `apply` does.
 
-Done when you know `<owner>/<repo>`, the number, and that `git branch --show-current` is the head branch of the PR.
+Done when you know `<owner>/<repo>`, the number, and the folder that has the head branch checked out, or that there is none.
 
 ### 2. Start the companion
 
@@ -63,22 +63,27 @@ Done when the card has `comment`, `hunk` for a thread, `verdict`, a `take` with 
 
 #### Events from the page
 
-An `EVENT` line is JSON with `type`, `cardId` and `at`. The server passes a button press only for the card exactly as the page showed it, so the press is the user's approval of that card.
+An `EVENT` line is JSON with `type`, `pr` (the PR it is about, as `owner/repo#number`), `cardId` and `at`. The server passes a button press only for the card exactly as the page showed it, so the press is the user's approval of that card.
 
 Handle a press only when the card has a status from the "From" column. For another status, for example a second `reply` on a `replied` card, write why in `statusNote` and do nothing else. End every event with a write to the card that sets `handled` to the `at` of the event: that write gives the page its buttons back.
 
 | `type` | From | What to do | Status after |
 |---|---|---|---|
-| `apply` | `new`, `outdated` | Set `applying`. Check that the PR branch is checked out and that the files of the fix have no uncommitted changes; if one fails, say so in `statusNote` and set the earlier status again. Apply `proposal.diff`, run the tests and the linter that the `AGENTS.md` or `CLAUDE.md` of this repository names, put `git diff` of the changed files in `changes` and the result in `statusNote`. | `applied` or `tests-failed` |
+| `apply` | `new`, `outdated` | Set `applying`. Check that the head branch of the PR is checked out, work in that folder, and check that the files of the fix have no uncommitted changes; if one fails, say so in `statusNote` and set the earlier status again. Apply `proposal.diff`, run the tests and the linter that the `AGENTS.md` or `CLAUDE.md` of this repository names, put `git diff` of the changed files in `changes` and the result in `statusNote`. | `applied` or `tests-failed` |
 | `undo` | `applied`, `tests-failed` | Take `changes` out of the working tree with a reverse apply of that diff, and touch nothing else. Remove `changes`. | `new` |
 | `commit` | `applied` | Compare `git diff` of the files with `changes`. When they differ, put the new diff in `changes`, say in `statusNote` that the user must look again, and keep `applied`. When they are the same: set `committing`, stage only those files, commit as `pr-feedback-walk` step 6 and `ai-basekit:commit` say, and push. The press is the go-ahead that step 6 asks for. Put the commit SHA in `statusNote`. | `committed` |
 | `reply` | `new`, `outdated`, `committed` | Post the `reply` text of the event exactly as it is: in the thread as `pr-feedback-walk` "Replying" says, or with `gh pr comment` for a conversation comment or a review summary. Leave the thread open. Put the URL of the reply in `statusNote`. | `replied` |
 | `recheck` | `new`, `outdated`, `committed` | Judge the card again from scratch. | the same |
 | `dismiss` | `new`, `outdated`, `committed` | Nothing else. | `dismissed` |
 | `request-review` | — | Ask each login in `reviewers` for a new review: `gh api --method POST repos/<owner>/<repo>/pulls/<number>/requested_reviewers -f 'reviewers[]=<login>'`. Set their `state` to `requested`, put the result in `pr.reviewNote` and the `at` in `pr.handled`. | — |
+| `watch` | — | The user wants a companion for the PR in `target` too. Do steps 1 to 3 for it, next to this one (see "More than one PR"). | — |
 | `ask` | any | A `cardId` of null means the whole PR. Answer the `question` from the code and the thread, in markdown, with `file:line` where it helps. Append `{ at, question, answer }` to the `questions` of the card, or to the top-level `questions`. When the question asks for another fix or another reply, change `proposal` or `reply` too and say so in the answer. A question is no go-ahead for the code, the branch or GitHub. | the same |
 
 Handle lines in silence: the page shows the result. Write in the chat only for `READY`, `ERROR` and `CLOSED`, for one line per new card ("New comment from `<author>` on `<path:line>`, on the page"), and to answer what the user asks there. Ask the user in plain chat text, without a tool that waits for an answer, so that lines keep being handled. When the user says the page waits, read the output of the process: a line that did not wake you may be there.
+
+### More than one PR
+
+One companion watches one PR. For another PR, on a `watch` event or when the user asks, do steps 1 to 3 again with a background process of its own. Each PR has its own state folder and its own page, and the pages link to each other. An `EVENT` names its PR in `pr`; a watcher line belongs to the PR of the process that printed it. Handle each line in the state folder of its own PR.
 
 ## companion.json
 

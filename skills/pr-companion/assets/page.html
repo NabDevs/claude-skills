@@ -73,6 +73,7 @@
   pre .add { background: var(--add); } pre .del { background: var(--del); }
   .note { padding: 8px 12px; border-radius: 6px; background: var(--code); }
   .note.bad { background: var(--del); } .note.good { background: var(--add); }
+  input { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
   textarea { display: block; width: 100%; min-height: 64px; max-height: 320px; field-sizing: content; resize: vertical; font: inherit; color: inherit;
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
   .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
@@ -119,6 +120,9 @@ const PR = 'pr';
 const views = new Map();  // cardId -> { key, node }: an unchanged card keeps its node, with focus and selection
 let known = null;         // card ids on the page so far; a later one gets a short highlight
 let lastJson = '';
+let others = [];          // the companions that run for other pull requests: { repo, number, title, todo, url }
+let watching = null;      // { target, count }: a pull request the user asked Claude to watch, until it shows up
+let polls = 0;
 let data = { cards: [] };
 
 const VERDICT = { holds: 'Holds', 'does-not-hold': 'Does not hold', unsure: 'Unclear' };
@@ -234,6 +238,20 @@ async function requestReview(reviewers) {
   }
 }
 
+// Asks Claude to start a companion for one more pull request.
+async function watchPr() {
+  const target = (asking.watch || '').trim();
+  if (!target) return;
+  const { at, problem } = await post({ type: 'watch', target });
+  failed.watch = problem?.includes('400') ? 'That is not a pull request. Use owner/repo#123 or its link on GitHub.' : problem;
+  if (at) {
+    watching = { target, count: others.length };
+    delete asking.watch;
+  }
+  document.activeElement?.blur();
+  render();
+}
+
 async function ask(id) {
   const question = (asking[id] || '').trim();
   if (!question) return;
@@ -293,6 +311,19 @@ function prView() {
     if (failed[PR]) body.append(el('div', { class: 'error', role: 'alert' }, failed[PR]));
   }
   body.append(el('h3', {}, 'Ask Claude'), askView(PR, data.questions));
+
+  body.append(el('h3', {}, 'Other pull requests'));
+  for (const other of others) {
+    body.append(el('div', {}, el('a', { href: other.url }, `${other.repo}#${other.number}`), ` ${other.title} · ${other.todo} to do`));
+  }
+  const field = el('input', { 'aria-label': 'Pull request to watch', placeholder: 'Watch one more: owner/repo#123 or its link on GitHub' });
+  field.value = asking.watch || '';
+  field.addEventListener('input', () => { asking.watch = field.value; });
+  field.addEventListener('blur', () => render());
+  field.addEventListener('keydown', (event) => { if (event.key === 'Enter') watchPr(); });
+  body.append(el('div', { class: 'askrow' }, field, el('button', { onclick: watchPr }, 'Watch')));
+  if (watching) body.append(el('div', { class: 'hint waiting' }, el('span', { class: 'spin' }), `Claude starts a companion for ${watching.target}. It shows here when it runs.`));
+  if (failed.watch) body.append(el('div', { class: 'error', role: 'alert' }, failed.watch));
   node.append(body);
   return node;
 }
@@ -376,7 +407,7 @@ function cardView(card) {
 function keep(id, shown, build) {
   const key = JSON.stringify(shown);
   const old = views.get(id);
-  const typing = document.activeElement?.tagName === 'TEXTAREA' && old?.node.contains(document.activeElement);
+  const typing = ['TEXTAREA', 'INPUT'].includes(document.activeElement?.tagName) && old?.node.contains(document.activeElement);
   if (old && (old.key === key || typing)) return old.node; // never rebuild under the user's cursor; blur renders again
   const node = build();
   views.set(id, { key, node });
@@ -401,6 +432,7 @@ function render() {
     if (isDone(card)) delete drafts[card.id];
   }
   if (pending[PR] && pending[PR].snapshot !== JSON.stringify(data.pr)) delete pending[PR];
+  if (watching && others.length !== watching.count) watching = null;
   // A question that was sent is answered once the data holds an entry with its time.
   for (const [id, sent] of Object.entries(asked)) {
     const answered = (id === PR ? data.questions : cards.find((c) => c.id === id)?.questions) || [];
@@ -420,9 +452,10 @@ function render() {
     el('span', {}, `${done.length} done`),
     pr.repo ? el('span', {}, pr.repo + (pr.headSha ? ` @ ${pr.headSha.slice(0, 7)}` : '')) : '',
     data.updatedAt ? el('span', {}, 'updated ' + new Date(data.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '',
+    ...others.map((other) => el('a', { class: 'badge', href: other.url, title: other.title }, `${other.repo}#${other.number} · ${other.todo} to do`)),
   );
 
-  const wanted = [keep(PR, [data.pr, data.questions, asked[PR], failed['ask:' + PR], failed[PR], armed[PR], Boolean(pending[PR])], prView), ...todo.map(view)];
+  const wanted = [keep(PR, [data.pr, data.questions, asked[PR], failed['ask:' + PR], failed[PR], armed[PR], Boolean(pending[PR]), others, watching, failed.watch], prView), ...todo.map(view)];
   if (!todo.length) {
     wanted.push(el('div', { class: 'empty' }, cards.length ? 'Everything is handled. New comments appear here by themselves; a new review can be asked at the top.'
       : 'No review comments yet. This page updates by itself when one arrives.'));
@@ -459,6 +492,10 @@ async function poll() {
       render();
     }
     setConn('ok', 'Live');
+    if (polls++ % 5 === 0) {
+      const found = await fetch('/prs', { headers }).then((r) => r.json()).catch(() => others);
+      if (JSON.stringify(found) !== JSON.stringify(others)) { others = found; render(); }
+    }
   } catch {
     setConn('bad', 'Not connected. Start the companion again from Claude; this page then continues by itself.');
   }

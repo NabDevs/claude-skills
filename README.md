@@ -31,6 +31,7 @@ These come from the user and define what the skill must do.
 9. The user can ask the agent a question on the page, about one comment or about the whole pull request, and reads the answer there. (Added on 2026-11-10.)
 10. The top of the page says what the pull request is about: a short summary, the ticket and the description. (Added on 2026-11-11.)
 11. The page shows what each reviewer did last, and a button asks them for a new review. (Added on 2026-11-11.)
+12. More than one pull request can be watched at the same time. The page links to the others and can start one more. (Added on 2026-11-11.)
 
 ### Design choices
 
@@ -51,6 +52,7 @@ These come from the user and define what the skill must do.
 - "Request review again" asks the reviewers who requested changes or only commented, by name on the button, after a second click. It is the last step of the author's round: fixes pushed, replies posted, review asked again. A first request to somebody who did not review yet goes through the chat. For this the watcher reports every new review with its state, also one without text.
 - A comment on the PR conversation and a review summary are outside `pr-feedback-walk`, which covers review threads. The agent judges them the same way and replies with `gh pr comment`.
 - A question on the page is an `ask` event. The agent answers in `companion.json`, and the page shows "Waiting for Claude…" until an entry with the time of that event is there. A question can make the agent rewrite the proposed fix or the draft reply, because those stay on the page. It is never a go-ahead for the code, the branch or GitHub: those keep their buttons. The idea comes from `guided-pr-review`.
+- More than one pull request: each keeps its own process, state folder and page, so nothing about one pull request changed. A page asks its server for the other companions that answer on this computer (`server.json` in the other state folders) and shows them as links with their number of open cards. A field on the page sends a `watch` event, and the agent starts one more companion. A fix can be applied only where the head branch of that pull request is checked out, so a second pull request of the same repository needs a git worktree for its fixes; watching, judging and replying need no checkout.
 - State per pull request lives in `~/.local/state/pr-companion/<owner>/<repo>/<pr>/` (or under `$XDG_STATE_HOME`): `watch-state.json`, `companion.json`, `server.json`. Button presses are not kept in a file.
 
 ### Known limits
