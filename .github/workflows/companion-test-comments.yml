@@ -31,4 +31,5 @@ jobs:
             -f commit_id="$SHA" -f path=skills/pr-companion/scripts/serve.js -F line=67 -f side=RIGHT \
             -f body='This reads `page.html` from disk on every request. Read it once at the start and keep it in memory.'
       - name: Comment on the conversation, which the watcher must skip for a bot
-        run: gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body 'Test report: 17 tests passed.'
+        run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body 'Test report: 17 tests passed.'
