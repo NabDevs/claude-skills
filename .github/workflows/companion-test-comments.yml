@@ -1,0 +1,34 @@
+# Test only. Posts review comments as github-actions[bot], so the pr-companion skill has
+# comments by somebody else to pick up: it skips the comments of the PR author.
+# Runs when the label "companion-test" is put on a pull request.
+# Remove this file before the pull request merges.
+name: companion test comments
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  comment:
+    if: github.event.label.name == 'companion-test'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Line comment in a review thread, about the interval
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
+            -f commit_id="$SHA" -f path=skills/pr-companion/scripts/watch.js -F line=33 -f side=RIGHT \
+            -f body='A negative `--interval` passes this check, because `Number("-5")` is truthy. The loop then waits `-5000` ms, which is no wait at all, and polls GitHub without a pause. Can you refuse a value below 1?'
+      - name: Line comment in a review thread, about reading the page
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
+            -f commit_id="$SHA" -f path=skills/pr-companion/scripts/serve.js -F line=67 -f side=RIGHT \
+            -f body='This reads `page.html` from disk on every request. Read it once at the start and keep it in memory.'
+      - name: Comment on the conversation, which the watcher must skip for a bot
+        run: gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body 'Test report: 17 tests passed.'
