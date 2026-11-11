@@ -33,7 +33,7 @@ Run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as 
 - Another `ERROR` in place of `READY`: the process has stopped. Tell the user the reason and stop.
 - The process stops later without `CLOSED`, for example at a time limit of the harness: start it again in silence. The URL stays the same and the page connects again.
 
-After `READY`, read the PR description and the tickets it names (a key in the title, the branch or the description), each once. They say what this PR must do and what it leaves out. Write the `pr` block to `companion.json` in `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (under `$XDG_STATE_HOME` when that is set), with a `summary` of two or three sentences: what the PR changes and why. A file from an earlier session keeps its cards; give a card that was left in `applying` or `committing` the status that the working tree and `git log` show.
+After `READY`, read the PR description and the tickets it names (a key in the title, the branch or the description), each once. They say what this PR must do and what it leaves out. Read who reviewed and who is asked to review. Write the `pr` block to `companion.json` in `~/.local/state/pr-companion/<owner>/<repo>/<number>/` (under `$XDG_STATE_HOME` when that is set), with a `summary` of two or three sentences: what the PR changes and why. A file from an earlier session keeps its cards; give a card that was left in `applying` or `committing` the status that the working tree and `git log` show.
 
 Done when `companion.json` has the `pr` block and the user has the whole URL, with the token after `#`, in one line.
 
@@ -44,7 +44,8 @@ Handle every line in the order it arrives. A line is done when `companion.json` 
 | Line | What to do |
 |---|---|
 | `OPEN <threadId> …` / `NEW <threadId> …` | Judge the thread (see below). For a thread that has a card, update that card. |
-| `NEW issue <commentId> …` / `NEW review <reviewId> …` | A comment on the PR conversation, or the summary of a review. Judge it the same way, with `path` null. Add no card when it holds no review feedback (thanks, a plain approval). |
+| `NEW issue <commentId> …` | A comment on the PR conversation. Judge it the same way, with `path` null. Add no card when it holds no review feedback (thanks, an answered question). |
+| `NEW review <reviewId> <author> <STATE>` | Somebody submitted a review. Set that reviewer's `state` in `pr.reviewers`. When the review has a summary text with feedback, judge it like a conversation comment. |
 | `RESOLVED <threadId>` | When every thread of a card is resolved, set the card to `dismissed` with `statusNote` "Resolved on GitHub". A card with its fix in the working tree (`applied`, `tests-failed`) keeps its status and gets only the note. |
 | `HEAD <sha>` | Set `pr.headSha`. For a commit you did not push for a card, check the code again for each card in `new` or `outdated`: when the commit fixed it, say so in `take`; when the diff no longer applies, rewrite it and set `outdated`. |
 | `ERROR <message>` | GitHub could not be read; the watcher tries again by itself. Tell the user in one line. |
@@ -74,6 +75,7 @@ Handle a press only when the card has a status from the "From" column. For anoth
 | `reply` | `new`, `outdated`, `committed` | Post the `reply` text of the event exactly as it is: in the thread as `pr-feedback-walk` "Replying" says, or with `gh pr comment` for a conversation comment or a review summary. Leave the thread open. Put the URL of the reply in `statusNote`. | `replied` |
 | `recheck` | `new`, `outdated`, `committed` | Judge the card again from scratch. | the same |
 | `dismiss` | `new`, `outdated`, `committed` | Nothing else. | `dismissed` |
+| `request-review` | — | Ask each login in `reviewers` for a new review: `gh api --method POST repos/<owner>/<repo>/pulls/<number>/requested_reviewers -f 'reviewers[]=<login>'`. Set their `state` to `requested`, put the result in `pr.reviewNote` and the `at` in `pr.handled`. | — |
 | `ask` | any | A `cardId` of null means the whole PR. Answer the `question` from the code and the thread, in markdown, with `file:line` where it helps. Append `{ at, question, answer }` to the `questions` of the card, or to the top-level `questions`. When the question asks for another fix or another reply, change `proposal` or `reply` too and say so in the answer. A question is no go-ahead for the code, the branch or GitHub. | the same |
 
 Handle lines in silence: the page shows the result. Write in the chat only for `READY`, `ERROR` and `CLOSED`, for one line per new card ("New comment from `<author>` on `<path:line>`, on the page"), and to answer what the user asks there. Ask the user in plain chat text, without a tool that waits for an answer, so that lines keep being handled. When the user says the page waits, read the output of the process: a line that did not wake you may be there.
@@ -87,7 +89,10 @@ Handle lines in silence: the page shows the result. Write in the chat only for `
     "branch": "<head branch>", "base": "<base branch>",
     "summary": "<two or three sentences: what the PR changes and why>",
     "body": "<the PR description, verbatim>",
-    "tickets": [{ "key": "INT-123", "title": "…", "url": "<https link>" }]
+    "tickets": [{ "key": "INT-123", "title": "…", "url": "<https link>" }],
+    "reviewers": [{ "login": "…", "state": "changes-requested | commented | approved | requested" }],
+    "reviewNote": "<result of the last request for review>",
+    "handled": "<at of the last request-review event>"
   },
   "updatedAt": "<ISO time>",
   "activity": "<what you do now; absent when idle>",

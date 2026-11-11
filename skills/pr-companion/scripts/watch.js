@@ -7,7 +7,7 @@
 //   OPEN    <threadId> <commentId> <author> <path:line>   unresolved thread without a card, at each start
 //   NEW     <threadId> <commentId> <author> <path:line>   new comment in a review thread
 //   NEW     issue      <commentId> <author> -             new comment on the PR conversation
-//   NEW     review     <reviewId>  <author> -             new review with a summary text
+//   NEW     review     <reviewId>  <author> <STATE>       new review: APPROVED, CHANGES_REQUESTED or COMMENTED
 //   RESOLVED <threadId>                                    somebody resolved the thread on GitHub
 //   HEAD    <sha>                                          new commit pushed to the PR
 //   CLOSED  <MERGED|CLOSED>                                PR is no longer open; the watch ends
@@ -58,7 +58,7 @@ const QUERY = `query($owner:String!, $name:String!, $pr:Int!) {
     pullRequest(number:$pr) {
       state headRefOid author { login }
       comments(last:100) { nodes { id author { login __typename } } }
-      reviews(last:50) { nodes { id author { login __typename } body } }
+      reviews(last:50) { nodes { id author { login __typename } state } }
       reviewThreads(first:100) { nodes {
         id isResolved path line
         comments(last:50) { nodes { id author { login __typename } } }
@@ -116,12 +116,12 @@ function changes(pr, prev, viewer, carded = null) {
     if (prev?.resolved && thread.isResolved && !resolved.has(thread.id)) lines.push(`RESOLVED ${thread.id}`);
     if (thread.isResolved) resolved.add(thread.id); else resolved.delete(thread.id);
   }
-  // Conversation comments and review summaries have no resolved state, so only new ones are reported.
+  // Conversation comments and reviews have no resolved state, so only new ones are reported.
   for (const c of pr.comments.nodes) {
     if (isNew(c) && prev && isWakeWorthy(c, null, viewer)) lines.push(`NEW issue ${c.id} ${login(c)} -`);
   }
   for (const r of pr.reviews.nodes) {
-    if (isNew(r) && prev && r.body.trim() && isWakeWorthy(r, null, viewer)) lines.push(`NEW review ${r.id} ${login(r)} -`);
+    if (isNew(r) && prev && isWakeWorthy(r, null, viewer)) lines.push(`NEW review ${r.id} ${login(r)} ${r.state}`);
   }
   if (pr.state !== 'OPEN') lines.push(`CLOSED ${pr.state}`);
 

@@ -84,6 +84,18 @@ test('a question reaches the agent with its time, for a card or for the whole pu
   }
 });
 
+test('a request for review names reviewers of this pull request, as the page showed it', async () => {
+  lines.length = 0;
+  const pr = { number: 1, reviewers: [{ login: 'anna', state: 'changes-requested' }, { login: 'bas', state: 'approved' }] };
+  fs.writeFileSync(path.join(stateDir, 'companion.json'), JSON.stringify({ pr, cards: [] }));
+  assert.equal((await post({ type: 'request-review', pr, reviewers: ['anna'] })).status, 200);
+  assert.deepEqual(JSON.parse(lines[0].slice('EVENT '.length)).reviewers, ['anna']);
+  assert.equal((await post({ type: 'request-review', pr, reviewers: ['stranger'] })).status, 400);
+  assert.equal((await post({ type: 'request-review', pr, reviewers: [] })).status, 400);
+  assert.equal((await post({ type: 'request-review', pr: { ...pr, number: 2 }, reviewers: ['anna'] })).status, 409);
+  assert.equal(lines.length, 1);
+});
+
 test('a press on a card that changed since the page showed it is refused', async () => {
   lines.length = 0;
   writeCards([{ ...CARD, proposal: { diff: '-a\n+c' } }]);

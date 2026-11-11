@@ -48,15 +48,23 @@ function createApp({ stateDir, token, emit }) {
       try { event = JSON.parse(raw); } catch { return send(400, 'bad json'); }
       // Only the known fields go to the agent. `at` names the event: the agent writes it back with its answer.
       const clean = { type: event?.type, cardId: event?.cardId ?? null, at: new Date().toISOString() };
+      const data = readJson(dataFile) ?? {};
       if (clean.type === 'ask') {
         // A question is about one card, or about the whole pull request when it names no card.
         clean.question = typeof event.question === 'string' ? event.question.trim() : '';
         const badCard = clean.cardId !== null && typeof clean.cardId !== 'string';
         if (!clean.question || clean.question.length > MAX_QUESTION || badCard) return send(400, 'bad question');
+      } else if (clean.type === 'request-review') {
+        // A new review can be asked from the reviewers on the page, and only while the page shows the pull request as it is.
+        const known = new Set((data.pr?.reviewers ?? []).map((reviewer) => reviewer.login));
+        const logins = Array.isArray(event.reviewers) ? event.reviewers : [];
+        if (!logins.length || !logins.every((login) => known.has(login))) return send(400, 'bad reviewers');
+        if (JSON.stringify(data.pr) !== JSON.stringify(event.pr)) return send(409, 'pull request changed');
+        clean.reviewers = logins;
       } else {
         if (!BUTTONS.has(clean.type) || typeof clean.cardId !== 'string') return send(400, 'bad event');
         // A press approves what the page showed, so it only counts for the card as it is now.
-        const current = (readJson(dataFile)?.cards ?? []).find((card) => card.id === clean.cardId);
+        const current = (data.cards ?? []).find((card) => card.id === clean.cardId);
         if (!current || JSON.stringify(current) !== JSON.stringify(event.card)) return send(409, 'card changed');
         if (clean.type === 'reply') clean.reply = String(event.reply ?? '');
       }

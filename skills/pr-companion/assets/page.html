@@ -144,6 +144,13 @@ const ACTION = {
   dismiss: { label: 'Dismiss', busy: 'Dismissing…', quiet: true },
 };
 const STEPS = ['apply', 'commit', 'reply'];
+// What a reviewer did last. `again` marks the ones a new review can be asked from.
+const REVIEW = {
+  'changes-requested': { label: 'changes requested', tone: 'does-not-hold', again: true },
+  commented: { label: 'commented', tone: 'unsure', again: true },
+  approved: { label: 'approved', tone: 'holds' },
+  requested: { label: 'review requested', tone: '' },
+};
 const statusOf = (card) => STATUS[card.status] || { label: card.status || '', buttons: ['recheck', 'dismiss'] };
 const isDone = (card) => Boolean(statusOf(card).done);
 
@@ -212,6 +219,21 @@ async function sendEvent(card, type) {
   }
 }
 
+// Asks the reviewers for a new review, after a second click: it notifies them on GitHub.
+async function requestReview(reviewers) {
+  if (!armed[PR]) { armed[PR] = true; return render(); }
+  delete armed[PR];
+  pending[PR] = { snapshot: JSON.stringify(data.pr) };
+  render();
+  const { problem } = await post({ type: 'request-review', pr: data.pr, reviewers });
+  failed[PR] = problem;
+  if (problem) {
+    delete pending[PR];
+    render();
+    poll();
+  }
+}
+
 async function ask(id) {
   const question = (asking[id] || '').trim();
   if (!question) return;
@@ -257,6 +279,19 @@ function prView() {
     body.append(el('div', { class: 'hint' }, 'Ticket: ', link(ticket.url, ticket.key) || ticket.key, ticket.title ? ` ${ticket.title}` : ''));
   }
   if (pr.body) body.append(el('details', { class: 'fold' }, el('summary', {}, 'Description on GitHub'), rich(pr.body)));
+  if (pr.reviewers?.length) {
+    const again = pr.reviewers.filter((r) => REVIEW[r.state]?.again).map((r) => r.login);
+    const ask = el('button', { class: armed[PR] ? 'primary' : '', onclick: () => requestReview(again) }, armed[PR] ? `Confirm: ask ${again.join(', ')}` : 'Request review again');
+    ask.disabled = Boolean(pending[PR]);
+    body.append(el('h3', {}, 'Reviewers'), el('div', { class: 'actions' },
+      ...pr.reviewers.map((r) => el('span', { class: 'badge ' + (REVIEW[r.state]?.tone ?? '') }, `${r.login}: ${REVIEW[r.state]?.label ?? r.state}`)),
+      el('span', { class: 'spacer' }),
+      pending[PR] ? el('span', { class: 'status' }, el('span', { class: 'spin' }), 'Asking for a review…') : null,
+      again.length ? ask : null,
+      armed[PR] ? el('button', { class: 'quiet', onclick: () => { delete armed[PR]; render(); } }, 'Cancel') : null));
+    if (pr.reviewNote) body.append(el('div', { class: 'hint' }, pr.reviewNote));
+    if (failed[PR]) body.append(el('div', { class: 'error', role: 'alert' }, failed[PR]));
+  }
   body.append(el('h3', {}, 'Ask Claude'), askView(PR, data.questions));
   node.append(body);
   return node;
@@ -365,6 +400,7 @@ function render() {
     if (pending[card.id] && pending[card.id].snapshot !== JSON.stringify(card)) delete pending[card.id];
     if (isDone(card)) delete drafts[card.id];
   }
+  if (pending[PR] && pending[PR].snapshot !== JSON.stringify(data.pr)) delete pending[PR];
   // A question that was sent is answered once the data holds an entry with its time.
   for (const [id, sent] of Object.entries(asked)) {
     const answered = (id === PR ? data.questions : cards.find((c) => c.id === id)?.questions) || [];
@@ -386,9 +422,9 @@ function render() {
     data.updatedAt ? el('span', {}, 'updated ' + new Date(data.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '',
   );
 
-  const wanted = [keep(PR, [data.pr, data.questions, asked[PR], failed['ask:' + PR]], prView), ...todo.map(view)];
+  const wanted = [keep(PR, [data.pr, data.questions, asked[PR], failed['ask:' + PR], failed[PR], armed[PR], Boolean(pending[PR])], prView), ...todo.map(view)];
   if (!todo.length) {
-    wanted.push(el('div', { class: 'empty' }, cards.length ? 'Everything is handled. New comments appear here by themselves.'
+    wanted.push(el('div', { class: 'empty' }, cards.length ? 'Everything is handled. New comments appear here by themselves; a new review can be asked at the top.'
       : 'No review comments yet. This page updates by itself when one arrives.'));
   }
   if (done.length) wanted.push(el('div', { class: 'section' }, `Done (${done.length})`), ...done.map(view));

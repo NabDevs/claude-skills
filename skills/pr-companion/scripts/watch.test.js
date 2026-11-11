@@ -58,16 +58,16 @@ test('a later start lists the unresolved threads that still have no card', () =>
   assert.deepEqual(changes(pr, prev, 'me', null).lines, ['NEW t2 c5 bas src/a.js:7']);
 });
 
-test('a review summary and a resolved thread are reported once', () => {
-  const review = (id, author, body) => ({ id, author, body });
+test('a review and a resolved thread are reported once', () => {
+  const review = (id, author, state) => ({ id, author, state });
   const before = pullRequest({ reviewThreads: { nodes: [thread('t1', [comment('c1', human('anna'))])] } });
   const { state } = changes(before, null, 'me', new Set());
   const pr = pullRequest({
-    reviews: { nodes: [review('r1', human('anna'), 'Please add tests.'), review('r2', human('anna'), '  '), review('r3', bot, 'Reviewed 3 files'), review('r4', human('me'), 'own')] },
+    reviews: { nodes: [review('r1', human('anna'), 'CHANGES_REQUESTED'), review('r2', human('bas'), 'APPROVED'), review('r3', bot, 'COMMENTED'), review('r4', human('me'), 'PENDING')] },
     reviewThreads: { nodes: [thread('t1', [comment('c1', human('anna'))], { isResolved: true })] },
   });
   const next = changes(pr, state, 'me');
-  assert.deepEqual(next.lines, ['RESOLVED t1', 'NEW review r1 anna -']);
+  assert.deepEqual(next.lines, ['RESOLVED t1', 'NEW review r1 anna CHANGES_REQUESTED', 'NEW review r2 bas APPROVED']);
   assert.deepEqual(changes(pr, next.state, 'me').lines, []);
 });
 
