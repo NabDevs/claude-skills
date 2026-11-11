@@ -61,12 +61,12 @@ These come from the user and define what the skill must do.
 - A comment that is edited after it was seen is not reported again.
 - A new comment that arrives while no companion runs, in a thread that has a card, is reported at the next start. A conversation comment or a review summary whose `NEW` line the agent did not handle is not reported again.
 
-### Test status (2026-11-10)
+### Test status (2026-11-11)
 
-Unit tests, `node --test skills/pr-companion/scripts/` (14 tests, all pass):
+Unit tests, `node --test skills/pr-companion/scripts/` (17 tests, all pass):
 
-- `watch.test.js`: the argument parsing, `isWakeWorthy`, and the lines for a first start, a later start with and without cards, a new comment, a review summary, a resolved thread, a new head and a closed pull request.
-- `serve.test.js`: the token, the host name, requests that cannot be read (`//`, a body of `null`), the `EVENT` line of a button press and of a question, and the 409 for a card that changed.
+- `watch.test.js`: the argument parsing, `isWakeWorthy`, and the lines for a first start, a later start with and without cards, a new comment, a new review with its state, a resolved thread, a new head and a closed pull request.
+- `serve.test.js`: the token, the host name, requests that cannot be read (`//`, a body of `null`), the `EVENT` line of a button press, a question, a request for review and a pull request to watch, the 409 for a card or a pull request that changed, and the list of other companions.
 
 Read-only against `myparcelnl/sdk#711`:
 
@@ -75,15 +75,18 @@ Read-only against `myparcelnl/sdk#711`:
 - The URL is the same after a restart; a second companion for the same pull request is refused; a port taken by another program falls back to a free one.
 - The server keeps running after `GET //`, and no process is left after it stops.
 
-The page, in headless Chrome with ten synthetic cards (37 checks, all pass). The script that drives Chrome is not in this repository:
+The page, in headless Chrome with synthetic data for two pull requests (53 checks, all pass). The script that drives Chrome is not in this repository:
 
 - Light, dark and a 400 pixel window; no sideways scroll.
 - Every button of every status; the second click for a reply; a failed send; a press on a card that changed; the buttons come back after "Judge again".
 - Typing in one card while other cards update; a new card; a half-written `companion.json`; a lost and restored connection; a wrong token.
 - A question on a card and on the pull request, with the waiting state and the answer.
+- The panel about the pull request: summary, ticket, folded description, and the code hunk on a card.
+- "Request review again": the reviewers it names, the second click, the busy state and the new states.
+- The link to the other pull request, its page, and the field that asks for one more.
 
 Not tested yet:
 
 - The page in Safari and Firefox.
-- The full cycle with a real agent and real buttons: apply, tests, commit, push, reply, undo. No button has changed code or GitHub yet.
+- The full cycle with a real agent and real buttons: apply, tests, commit, push, reply, undo, a request for review, a second pull request. No button has changed code or GitHub yet.
 - `SKILL.md` as an agent follows it: the tables are checked against the page and the scripts by reading only.
