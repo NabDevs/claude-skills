@@ -28,7 +28,7 @@ Done when you know `<owner>/<repo>`, the number, and the folder that has the hea
 
 ### 2. Start the companion
 
-Run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as a background process whose output lines wake you: the `Monitor` tool. It checks the PR, prints `READY <url>`, and then prints the lines of step 3.
+From a folder of the repository, run `node <this skill's directory>/scripts/serve.js <owner>/<repo> <number>` as a background process whose output lines wake you: the `Monitor` tool. The page reads whole files from that folder with git. It checks the PR, prints `READY <url>`, and then prints the lines of step 3.
 
 - `ERROR … already runs … (pid N)`: an earlier session left its companion. Stop that process and start again.
 - Another `ERROR` in place of `READY`: the process has stopped. Tell the user the reason and stop.
@@ -40,7 +40,7 @@ Done when `companion.json` has the `pr` block and the user has the whole URL, wi
 
 ### 3. Handle each line
 
-Handle every line in the order it arrives. A line is done when `companion.json` holds its result; write in the chat only after that. When the work takes more than a moment, put what you do in `activity` ("Judging 13 open comments") and remove it when you are idle.
+Handle every line in the order it arrives. A line is done when `companion.json` holds its result; write in the chat only after that. Write each change with `node <this skill's directory>/scripts/card.js` (its usage is at the top of the script): one call writes the file in one step, so the page never reads half of it. When the work takes more than a moment, put what you do in `activity` ("Judging 13 open comments") and remove it when you are idle.
 
 | Line | What to do |
 |---|---|
@@ -66,12 +66,16 @@ Done when the card has `comment`, `hunk` for a thread, `verdict`, a `take` with 
 
 An `EVENT` line is JSON with `type`, `pr` (the PR it is about, as `owner/repo#number`), `cardId` and `at`. The server passes a button press only for the card exactly as the page showed it, so the press is the user's approval of that card.
 
+The harness can cut a long line short. When a line ends in `(truncated)` or is no JSON, get the whole event with `card.js <owner>/<repo> <number> event <at>` before you act: a reply must be posted exactly as the user left it.
+
 Handle a press only when the card has a status from the "From" column. For another status, for example a second `reply` on a `replied` card, write why in `statusNote` and do nothing else. End every event with a write to the card that sets `handled` to the `at` of the event: that write gives the page its buttons back.
 
 | `type` | From | What to do | Status after |
 |---|---|---|---|
+| `fix` | `new`, `outdated` | The whole round in one press. Do `apply`. When the tests pass and `git diff` of the files equals `proposal.diff`, do `commit` and then `reply`, with the `reply` text of the event. Set `applying`, `committing` and `replying` as you go, so the page shows the step. Stop at `tests-failed` when the tests fail, and at `applied` when the diff differs. | `replied`, or where it stopped |
 | `apply` | `new`, `outdated` | Set `applying`. Find the folder that has the branch of the fix checked out: `proposal.branch`, else the head branch of the PR. When no folder has it, add a git worktree for that branch in the state folder. Work in that folder, and check that the files of the fix have no uncommitted changes; if one fails, say so in `statusNote` and set the earlier status again. Apply `proposal.diff`, run the tests and the linter that the `AGENTS.md` or `CLAUDE.md` of this repository names, put `git diff` of the changed files in `changes` and the result in `statusNote`. | `applied` or `tests-failed` |
 | `undo` | `applied`, `tests-failed` | Take `changes` out of the working tree with a reverse apply of that diff, and touch nothing else. Remove `changes`. | `new` |
+| `ship` | `applied` | Do `commit`, then `reply` with the `reply` text of the event. | `replied`, or `applied` when the diff changed |
 | `commit` | `applied` | Compare `git diff` of the files with `changes`. When they differ, put the new diff in `changes`, say in `statusNote` that the user must look again, and keep `applied`. When they are the same: set `committing`, stage only those files, commit as `pr-feedback-walk` step 6 and `ai-basekit:commit` say, and push. The press is the go-ahead that step 6 asks for. Put the commit SHA in `statusNote`. | `committed` |
 | `reply` | `new`, `outdated`, `committed` | Post the `reply` text of the event exactly as it is: in the thread as `pr-feedback-walk` "Replying" says, or with `gh pr comment` for a conversation comment or a review summary. Leave the thread open. Put the URL of the reply in `statusNote`. | `replied` |
 | `recheck` | `new`, `outdated`, `committed` | Judge the card again from scratch. | the same |
@@ -137,7 +141,7 @@ Review a stack as one change that is cut into parts:
       "stack": "<in a stack: what the other PRs do with this code>",
       "proposal": { "diff": "<unified diff, not applied>", "branch": "<in a stack: the branch the fix goes into, when it is a lower PR>" },
       "reply": "<draft reply>",
-      "status": "new | outdated | applying | applied | tests-failed | committing | committed | replied | dismissed",
+      "status": "new | outdated | applying | applied | tests-failed | committing | committed | replying | replied | dismissed",
       "statusNote": "<test result, commit SHA, reply URL, or why an event was skipped>",
       "changes": "<git diff of the applied fix>",
       "handled": "<at of the last event handled>",

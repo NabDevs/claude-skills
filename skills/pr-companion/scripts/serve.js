@@ -7,6 +7,7 @@
 //
 // Usage: node serve.js <owner/repo> <pr-number> [--interval <seconds>]
 
+const { execFile } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -14,7 +15,7 @@ const path = require('node:path');
 const { stateDirFor, readJson, watch, cli } = require('./watch.js');
 
 const PAGE = path.join(__dirname, '..', 'assets', 'page.html');
-const BUTTONS = new Set(['apply', 'undo', 'commit', 'reply', 'dismiss', 'recheck']);
+const BUTTONS = new Set(['fix', 'apply', 'undo', 'ship', 'commit', 'reply', 'dismiss', 'recheck']);
 const MAX_QUESTION = 4000;
 const DONE = new Set(['replied', 'dismissed']); // the statuses the page counts as done
 // A pull request as the user types it: owner/repo#12, or its link on GitHub.
@@ -51,10 +52,24 @@ async function others(stateDir) {
   return found;
 }
 
-// The server for one pull request. stateDir holds companion.json; pr names the pull request
-// ("owner/repo#12") in every event; emit gets each line for the agent.
-function createApp({ stateDir, token, pr, emit }) {
+// The text of one file of the pull request at its head commit, read from the local repository.
+// Resolves { path, line, sha, text }, or { problem } when git does not have that commit or that file.
+function fileOf(card, sha, repoDir) {
+  return new Promise((resolve) => {
+    const safe = /^[0-9a-f]{7,40}$/.test(sha || '') && typeof card?.path === 'string' && !card.path.startsWith('-') && !card.path.split('/').includes('..');
+    if (!safe) return resolve({ problem: 'This card has no file.' });
+    execFile('git', ['-C', repoDir, 'show', `${sha}:${card.path}`], { encoding: 'utf8', maxBuffer: 4_000_000 }, (error, text) => {
+      resolve(error ? { problem: 'The local repository does not have this file at the head commit of the pull request.' } : { path: card.path, line: card.line, sha, text });
+    });
+  });
+}
+
+// The server for one pull request. stateDir holds companion.json and events.jsonl; pr names the
+// pull request ("owner/repo#12") in every event; repoDir is a checkout of the repository, for the
+// whole-file view; emit gets each line for the agent.
+function createApp({ stateDir, token, pr, repoDir = process.cwd(), emit }) {
   const dataFile = path.join(stateDir, 'companion.json');
+  const eventsFile = path.join(stateDir, 'events.jsonl');
 
   return http.createServer((req, res) => {
     const send = (status, body, type = 'text/plain') => {
@@ -71,6 +86,11 @@ function createApp({ stateDir, token, pr, emit }) {
 
     if (route === 'GET /data') {
       return send(200, fs.existsSync(dataFile) ? fs.readFileSync(dataFile) : '{"cards":[]}', 'application/json');
+    }
+    if (route === 'GET /file') {
+      const data = readJson(dataFile) ?? {};
+      const card = (data.cards ?? []).find((c) => c.id === new URLSearchParams(req.url.split('?')[1]).get('card'));
+      return void fileOf(card, data.pr?.headSha, repoDir).then((file) => send(file.problem ? 404 : 200, JSON.stringify(file), 'application/json'));
     }
     if (route === 'GET /prs') return void others(stateDir).then((found) => send(200, JSON.stringify(found), 'application/json'));
     if (route !== 'POST /event') return send(404, 'not found');
@@ -112,8 +132,11 @@ function createApp({ stateDir, token, pr, emit }) {
         // A press approves what the page showed, so it only counts for the card as it is now.
         const current = (data.cards ?? []).find((card) => card.id === clean.cardId);
         if (!current || JSON.stringify(current) !== JSON.stringify(event.card)) return send(409, 'card changed');
-        if (clean.type === 'reply') clean.reply = String(event.reply ?? '');
+        if (['fix', 'ship', 'reply'].includes(clean.type)) clean.reply = String(event.reply ?? ''); // these post the reply
+
       }
+      // The file keeps the whole event: a harness can cut a long line short before the agent sees it.
+      fs.appendFileSync(eventsFile, JSON.stringify(clean) + '\n');
       emit(`EVENT ${JSON.stringify(clean)}`);
       send(200, JSON.stringify({ at: clean.at }), 'application/json');
     });

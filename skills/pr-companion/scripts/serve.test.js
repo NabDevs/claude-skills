@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { test, before, after } = require('node:test');
 const { createApp } = require('./serve.js');
 
@@ -140,6 +141,41 @@ test('a rebase of the stack names pull requests of this stack, as the page showe
   assert.equal((await post({ type: 'sync-stack', pr, prs: [] })).status, 400);
   assert.equal((await post({ type: 'sync-stack', pr: { ...pr, stackBehind: [] }, prs: [12] })).status, 409);
   assert.equal(lines.length, 1);
+});
+
+test('every event is kept whole in events.jsonl', async () => {
+  const eventsFile = path.join(stateDir, 'events.jsonl');
+  fs.rmSync(eventsFile, { force: true });
+  lines.length = 0;
+  const question = 'Why? '.repeat(400).trim();
+  const { at } = await (await post({ type: 'ask', cardId: null, question })).json();
+  const kept = fs.readFileSync(eventsFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(kept, [{ type: 'ask', pr: 'owner/repo#1', cardId: null, at, question }]);
+  assert.equal(lines[0], `EVENT ${JSON.stringify(kept[0])}`);
+});
+
+test('the whole file comes from the local repository at the head commit', async () => {
+  const repoDir = path.join(root, 'checkout');
+  fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  fs.writeFileSync(path.join(repoDir, 'src', 'a.js'), 'one\ntwo\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'first');
+  const sha = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(repoDir, 'src', 'a.js'), 'changed after the commit\n');
+
+  const withFiles = createApp({ stateDir, token: TOKEN, pr: 'owner/repo#1', repoDir, emit: () => {} });
+  await new Promise((resolve) => withFiles.listen(0, '127.0.0.1', resolve));
+  const file = (card, headers = { 'X-Companion-Token': TOKEN }) => fetch(`http://127.0.0.1:${withFiles.address().port}/file?card=${card}`, { headers });
+  fs.writeFileSync(path.join(stateDir, 'companion.json'), JSON.stringify({ pr: { headSha: sha }, cards: [
+    { id: 'c1', path: 'src/a.js', line: 2 }, { id: 'c2', path: 'src/missing.js', line: 1 }, { id: 'c3', path: '../outside', line: 1 }, { id: 'c4', path: null },
+  ] }));
+  assert.equal((await file('c1', {})).status, 403);
+  assert.deepEqual(await (await file('c1')).json(), { path: 'src/a.js', line: 2, sha, text: 'one\ntwo\n' });
+  for (const card of ['c2', 'c3', 'c4', 'unknown']) assert.equal((await file(card)).status, 404, card);
+  withFiles.close();
+  withFiles.closeAllConnections();
 });
 
 test('a press on a card that changed since the page showed it is refused', async () => {
