@@ -19,7 +19,8 @@ test('parseTarget reads the repository, the number and the options', () => {
 });
 
 test('parseTarget refuses arguments that name no pull request', () => {
-  for (const args of [[], ['owner/repo'], ['owner', '12'], ['owner/repo', 'abc'], ['owner/repo', '0'], ['../x/y', '1']]) {
+  const interval = (value) => ['owner/repo', '12', '--interval', value];
+  for (const args of [[], ['owner/repo'], ['owner', '12'], ['owner/repo', 'abc'], ['owner/repo', '0'], ['../x/y', '1'], interval('-5'), interval('0'), interval('soon'), ['owner/repo', '12', '--interval']]) {
     assert.equal(parseTarget(args), null, JSON.stringify(args));
   }
 });
