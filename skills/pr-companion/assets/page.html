@@ -170,9 +170,10 @@ function rich(text) {
   return box;
 }
 
-function diffView(text) {
+// Shows a diff with its added and removed lines marked; `last` keeps only that many lines from the end.
+function diffView(text, last = Infinity) {
   const pre = el('pre', { class: 'diff' });
-  for (const line of String(text).split('\n')) {
+  for (const line of String(text).split('\n').slice(-last)) {
     const cls = line.startsWith('+') && !line.startsWith('+++') ? 'add'
       : line.startsWith('-') && !line.startsWith('---') ? 'del' : '';
     pre.append(el('span', cls ? { class: cls } : {}, line || ' '));
@@ -269,6 +270,8 @@ function cardView(card) {
   ));
 
   const body = el('div', { class: 'body' });
+  // GitHub gives the hunk up to the line of the comment, so its last lines are the ones the reviewer points at.
+  if (card.hunk) body.append(el('h3', {}, 'Code the comment is about'), diffView(card.hunk, 8));
   body.append(el('div', { class: 'quote' },
     el('div', { class: 'who' }, el('b', {}, card.author || 'unknown'), ' wrote · ', link(card.url, 'open on GitHub')),
     rich(card.comment || '')));

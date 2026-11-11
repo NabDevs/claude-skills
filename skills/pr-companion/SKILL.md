@@ -52,13 +52,13 @@ Handle every line in the order it arrives. A line is done when `companion.json` 
 
 #### Judging a thread
 
-1. Read the whole thread.
+1. Read the whole thread, with the `diffHunk` of its first comment.
 2. Do `pr-feedback-walk` walk steps 1 to 4: the comment verbatim, threads on the same problem in one card, the claim checked against the code with `file:line`, then a fix or a pushback.
 3. Write the fix as a unified diff in `proposal.diff`. The working tree stays as it is until `apply`. A pushback has no `proposal`.
 4. Draft the reply with `writing-style`.
 5. Write the card with status `new`. A card with its fix in the working tree (`applied`, `tests-failed`) keeps its status and its `changes`.
 
-Done when the card has `comment`, `verdict`, a `take` with at least one `file:line`, and `reply`.
+Done when the card has `comment`, `hunk` for a thread, `verdict`, a `take` with at least one `file:line`, and `reply`.
 
 #### Events from the page
 
@@ -92,6 +92,7 @@ Handle lines in silence: the page shows the result. Write in the chat only for `
       "threadIds": ["<every thread this card answers>"],
       "author": "<login>", "url": "<https link to the comment>",
       "path": "src/File.php", "line": 57,
+      "hunk": "<diffHunk of the first comment, verbatim; absent for a conversation comment or a review summary>",
       "comment": "<first comment, verbatim>",
       "replies": [{ "author": "<login>", "body": "<verbatim>" }],
       "verdict": "holds | does-not-hold | unsure",
