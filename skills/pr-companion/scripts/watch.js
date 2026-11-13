@@ -28,9 +28,11 @@ function parseTarget([repo = '', prArg, ...rest]) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !Number.isInteger(pr) || pr < 1) return null;
   const [owner, name] = repo.split('/');
   const at = rest.indexOf('--interval');
+  // An interval below 1 second would make the watch read GitHub without a pause.
+  const interval = at === -1 ? 120 : Number(rest[at + 1]);
+  if (!(interval >= 1)) return null;
   return {
-    owner, name, pr,
-    interval: (at !== -1 && Number(rest[at + 1])) || 120,
+    owner, name, pr, interval,
     once: rest.includes('--once'),
   };
 }
